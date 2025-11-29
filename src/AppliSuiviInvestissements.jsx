@@ -341,7 +341,7 @@ const InvestmentTrackerApp = () => {
   }};
   const handleSaveMovement = (data) => {
       const newMove = { ...data, id: Date.now() };
-      const updated = brokers.map(b => b.id !== selectedBroker.id ? b : { ...b, accounts: b.accounts.map(a => a.id !== selectedAccount.id ? a : { ...a, movements: [...(a.movements || []), newMove].sort((x, y) => new Date(y.date) - new Date(x.date)) }) };
+      const updated = brokers.map(b => b.id !== selectedBroker.id ? b : { ...b, accounts: b.accounts.map(a => a.id !== selectedAccount.id ? a : { ...a, movements: [...(a.movements || []), newMove].sort((x, y) => new Date(y.date) - new Date(x.date)) }) })
       saveUserData(updated, undefined, undefined);
       const ub = updated.find(b => b.id === selectedBroker.id); setSelectedBroker(ub); setSelectedAccount(ub.accounts.find(a => a.id === selectedAccount.id)); showToast('Mouvement ajouté'); closeModal(); openModal('movementList');
   };
