@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 
 // --- FIREBASE IMPORTS ---
@@ -94,64 +94,40 @@ const calculateXIRR = (movements, currentValue) => {
 
 // --- HELPER AGREGATION MENSUELLE ---
 const processMonthlyStats = (brokers) => {
-    // 1. Récupérer toutes les dates de snapshot uniques (YYYY-MM)
     const allSnapshots = brokers.flatMap(b => b.accounts).flatMap(a => a.snapshots || []).map(s => s.date.substring(0, 7));
     const uniqueMonths = [...new Set(allSnapshots)].sort();
-
     if (uniqueMonths.length === 0) return [];
 
     const monthlyStats = uniqueMonths.map((monthStr, index) => {
         const monthDate = new Date(monthStr + "-01");
-        // Fin du mois pour comparaison
         const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-
         let totalValue = 0;
-        let totalFlows = 0; // Dépôts - Retraits ce mois-ci
+        let totalFlows = 0;
 
         brokers.forEach(broker => {
             broker.accounts.forEach(account => {
                 const rate = parseFloat(account.exchangeRate || 1);
-                
-                // Trouver le snapshot le plus proche de la fin de ce mois (sans dépasser)
-                // Ou le dernier snapshot disponible avant ce mois (carry forward)
                 const snaps = (account.snapshots || []).filter(s => s.date <= endOfMonth.toISOString().split('T')[0]);
                 const lastSnap = snaps.sort((a,b) => new Date(b.date) - new Date(a.date))[0];
-                
-                if (lastSnap) {
-                    totalValue += parseFloat(lastSnap.amount) * rate;
-                }
+                if (lastSnap) totalValue += parseFloat(lastSnap.amount) * rate;
 
-                // Calculer les flux de CE mois spécifique
                 const monthMoves = (account.movements || []).filter(m => m.date.startsWith(monthStr));
                 monthMoves.forEach(m => {
                     const amount = parseFloat(m.amount) * rate;
                     if (m.type === 'deposit') totalFlows += amount;
                     else if (m.type === 'withdrawal') totalFlows -= amount;
-                    // On ignore les intérêts/dividendes dans le calcul de flux "apport", 
-                    // car ils font partie de la performance interne.
                 });
             });
         });
-
-        return {
-            month: monthStr,
-            displayDate: monthDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
-            value: totalValue,
-            flow: totalFlows
-        };
+        return { month: monthStr, displayDate: monthDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: totalValue, flow: totalFlows };
     });
 
-    // Calculer les variations et performances
     return monthlyStats.map((stat, i) => {
         if (i === 0) return { ...stat, variation: 0, performance: 0, yield: 0 };
-        
         const prev = monthlyStats[i - 1];
         const variation = stat.value - prev.value;
-        const performance = variation - stat.flow; // Ce qui reste après avoir retiré l'effet des dépôts/retraits
-        // Rendement sur la période : Performance / (Valeur début + Flux pondérés). 
-        // Simplification : Performance / Valeur mois précédent
+        const performance = variation - stat.flow;
         const yieldPct = prev.value > 0 ? (performance / prev.value) * 100 : 0;
-
         return { ...stat, variation, performance, yield: yieldPct };
     });
 };
@@ -184,94 +160,138 @@ const labelClass = "block text-sm font-bold text-gray-700 dark:text-gray-300 mb-
 
 // --- VUES SECONDAIRES (SIMULATION & HISTORIQUE) ---
 
-const SimulationView = ({ currentTotal }) => {
+const SimulationView = ({ currentTotal, globalTRI }) => {
     const [monthlyContribution, setMonthlyContribution] = useState(500);
     const [years, setYears] = useState(15);
     const [expectedReturn, setExpectedReturn] = useState(5); // %
 
+    // Préparation des données de projection
     const data = useMemo(() => {
         let result = [];
-        let capital = currentTotal;
+        let capitalTarget = currentTotal;
+        let capitalHistorical = currentTotal;
         let totalInvested = currentTotal;
-        const monthlyRate = expectedReturn / 100 / 12;
+        
+        const monthlyRateTarget = expectedReturn / 100 / 12;
+        // Si globalTRI est null ou invalide, on utilise 0 pour éviter le crash
+        const monthlyRateHistorical = (globalTRI || 0) / 100 / 12; 
 
         for (let y = 0; y <= years; y++) {
             result.push({
                 year: `Année ${y}`,
-                capital: Math.round(capital),
+                capitalTarget: Math.round(capitalTarget),
+                capitalHistorical: globalTRI ? Math.round(capitalHistorical) : null,
                 invested: Math.round(totalInvested)
             });
-            // Calculer pour l'année suivante
+            
+            // Calculer pour l'année suivante (12 mois)
             for (let m = 0; m < 12; m++) {
-                capital = (capital + monthlyContribution) * (1 + monthlyRate);
+                capitalTarget = (capitalTarget + monthlyContribution) * (1 + monthlyRateTarget);
+                capitalHistorical = (capitalHistorical + monthlyContribution) * (1 + monthlyRateHistorical);
                 totalInvested += monthlyContribution;
             }
         }
         return result;
-    }, [currentTotal, monthlyContribution, years, expectedReturn]);
+    }, [currentTotal, monthlyContribution, years, expectedReturn, globalTRI]);
 
-    const finalAmount = data[data.length - 1].capital;
-    const gain = finalAmount - data[data.length - 1].invested;
+    const finalTarget = data[data.length - 1].capitalTarget;
+    const finalHistorical = data[data.length - 1].capitalHistorical;
+    const finalInvested = data[data.length - 1].invested;
 
     return (
-        <div className="space-y-6 animate-fade-in w-full max-w-5xl mx-auto">
+        <div className="space-y-6 animate-fade-in w-full max-w-6xl mx-auto">
              <div className="flex items-center gap-3 mb-2">
                 <div className="bg-indigo-600 p-2 rounded-lg text-white"><Calculator className="w-6 h-6" /></div>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Simulateur de Patrimoine</h2>
+                <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Simulateur & Comparateur</h2>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg space-y-4 h-fit">
-                    <div>
-                        <label className={labelClass}>Apport Initial (€)</label>
-                        <input type="number" value={currentTotal.toFixed(0)} disabled className={`${inputClass} bg-gray-100 dark:bg-slate-900 cursor-not-allowed opacity-70`} />
-                        <p className="text-xs text-gray-500 mt-1">Basé sur votre patrimoine actuel.</p>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                {/* Inputs */}
+                <div className="md:col-span-4 lg:col-span-3 space-y-4">
+                    <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg space-y-4">
+                        <h3 className="font-bold text-gray-800 dark:text-white border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres</h3>
+                        <div>
+                            <label className={labelClass}>Apport Initial (€)</label>
+                            <input type="number" value={currentTotal.toFixed(0)} disabled className={`${inputClass} bg-gray-100 dark:bg-slate-900 cursor-not-allowed opacity-70`} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Épargne Mensuelle (€)</label>
+                            <input type="number" value={monthlyContribution} onChange={e => setMonthlyContribution(parseFloat(e.target.value) || 0)} className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Rendement Cible (%)</label>
+                            <input type="number" step="0.1" value={expectedReturn} onChange={e => setExpectedReturn(parseFloat(e.target.value) || 0)} className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Durée (Années)</label>
+                            <input type="range" min="1" max="40" value={years} onChange={e => setYears(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" />
+                            <div className="text-center font-bold mt-2 text-blue-600 dark:text-blue-400">{years} ans</div>
+                        </div>
                     </div>
-                    <div>
-                        <label className={labelClass}>Épargne Mensuelle (€)</label>
-                        <input type="number" value={monthlyContribution} onChange={e => setMonthlyContribution(parseFloat(e.target.value) || 0)} className={inputClass} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>Rendement Annuel Espéré (%)</label>
-                        <input type="number" step="0.1" value={expectedReturn} onChange={e => setExpectedReturn(parseFloat(e.target.value) || 0)} className={inputClass} />
-                    </div>
-                    <div>
-                        <label className={labelClass}>Durée (Années)</label>
-                        <input type="range" min="1" max="40" value={years} onChange={e => setYears(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" />
-                        <div className="text-center font-bold mt-2 text-blue-600 dark:text-blue-400">{years} ans</div>
-                    </div>
+                    
+                    {/* Indicateur de TRI Historique */}
+                    {globalTRI !== null && (
+                        <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-xl border border-purple-100 dark:border-purple-800 shadow-sm animate-fade-in">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Activity className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                                <span className="font-bold text-purple-900 dark:text-purple-200">Votre Performance Réelle</span>
+                            </div>
+                            <div className="text-3xl font-bold text-purple-700 dark:text-purple-300">{globalTRI.toFixed(2)}% <span className="text-sm font-normal text-gray-500">/an</span></div>
+                            <p className="text-xs text-purple-600 dark:text-purple-400 mt-2">Calculé sur l'ensemble de votre historique (backtest).</p>
+                        </div>
+                    )}
                 </div>
 
-                <div className="md:col-span-2 space-y-6">
+                {/* Graphique */}
+                <div className="md:col-span-8 lg:col-span-9 space-y-6">
                     <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Projection</h3>
-                        <div className="h-72">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-gray-800 dark:text-white">Projection Comparée</h3>
+                            <div className="flex gap-4 text-xs font-bold">
+                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-blue-500"></div>Cible ({expectedReturn}%)</div>
+                                {globalTRI && <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-purple-500"></div>Historique ({globalTRI.toFixed(1)}%)</div>}
+                            </div>
+                        </div>
+                        <div className="h-80">
                             <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart data={data}>
                                     <defs>
-                                        <linearGradient id="colorCap" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/><stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/></linearGradient>
+                                        <linearGradient id="colorTarget" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/></linearGradient>
+                                        <linearGradient id="colorHist" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/><stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/></linearGradient>
                                     </defs>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                                     <XAxis dataKey="year" fontSize={12} stroke="#9CA3AF" interval={years > 10 ? 4 : 1} />
                                     <YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
                                     <Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor:'#1e293b', color:'#fff'}} formatter={(value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)} />
                                     <Legend />
-                                    <Area type="monotone" dataKey="capital" name="Patrimoine Total" stroke="#8B5CF6" fillOpacity={1} fill="url(#colorCap)" isAnimationActive={false} />
-                                    <Line type="monotone" dataKey="invested" name="Capital Versé" stroke="#10B981" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} />
+                                    {/* Courbe Cible */}
+                                    <Area type="monotone" dataKey="capitalTarget" name={`Scénario Cible (${expectedReturn}%)`} stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorTarget)" isAnimationActive={false} />
+                                    {/* Courbe Historique (si dispo) */}
+                                    {globalTRI && <Area type="monotone" dataKey="capitalHistorical" name={`Scénario Historique (${globalTRI.toFixed(1)}%)`} stroke="#8B5CF6" strokeWidth={3} fillOpacity={1} fill="url(#colorHist)" isAnimationActive={false} />}
+                                    <Line type="monotone" dataKey="invested" name="Capital Versé" stroke="#10B981" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} dot={false} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                             <div className="text-sm text-emerald-800 dark:text-emerald-300 mb-1">Patrimoine Final</div>
-                             <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{finalAmount.toLocaleString('fr-FR')} €</div>
+                    {/* Résultats Chiffrés */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div className="bg-gray-50 dark:bg-slate-700/50 p-4 rounded-xl border border-gray-200 dark:border-slate-600">
+                             <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Capital Investi (Total)</div>
+                             <div className="text-2xl font-bold text-gray-700 dark:text-gray-200">{finalInvested.toLocaleString('fr-FR')} €</div>
                         </div>
-                        <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-xl border border-indigo-100 dark:border-indigo-800">
-                             <div className="text-sm text-indigo-800 dark:text-indigo-300 mb-1">Intérêts Composés (Gains)</div>
-                             <div className="text-2xl font-bold text-indigo-700 dark:text-indigo-400">+{gain.toLocaleString('fr-FR')} €</div>
+                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
+                             <div className="text-sm text-blue-800 dark:text-blue-300 mb-1">Final (Scénario Cible)</div>
+                             <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{finalTarget.toLocaleString('fr-FR')} €</div>
+                             <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">+{ (finalTarget - finalInvested).toLocaleString('fr-FR') } € d'intérêts</div>
                         </div>
+                        {globalTRI && (
+                            <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-xl border border-purple-100 dark:border-purple-800">
+                                <div className="text-sm text-purple-800 dark:text-purple-300 mb-1">Final (Scénario Historique)</div>
+                                <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">{finalHistorical.toLocaleString('fr-FR')} €</div>
+                                <div className="text-xs text-purple-600 dark:text-purple-400 font-medium">+{ (finalHistorical - finalInvested).toLocaleString('fr-FR') } € d'intérêts</div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -606,7 +626,7 @@ const InvestmentTrackerApp = () => {
     reader.onload = (ev) => { try { const json = JSON.parse(ev.target.result); if(window.confirm('Remplacer les données Firebase par ce fichier ?')) { saveUserData(json.brokers || [], json.patrimonyGoal || 100000, json.targetAllocation || {}); showToast('Import réussi vers le Cloud'); } } catch { showToast('Fichier invalide', 'error'); } if(fileInputRef.current) fileInputRef.current.value = ''; };
     reader.readAsText(file);
   };
-  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.18" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.19" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
   if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
@@ -653,17 +673,19 @@ const InvestmentTrackerApp = () => {
     <div className="space-y-6 w-full animate-fade-in max-w-4xl mx-auto">
       <div className="flex items-center gap-3 mb-6"><div className="bg-blue-600 p-2 rounded-lg text-white"><HelpCircle className="w-6 h-6" /></div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">Aide & Guide d'utilisation</h2></div>
       <div className="grid gap-6">
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><Calculator className="w-5 h-5 text-indigo-500" /> Simulateur (Nouveau v1.18)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Projetez votre avenir financier.</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li>L'onglet <strong>Simulation</strong> utilise votre patrimoine actuel.</li><li>Jouez avec le montant d'épargne et le rendement espéré pour voir l'impact des intérêts composés.</li></ul></div>
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><Calendar className="w-5 h-5 text-orange-500" /> Historique Mensuel (Nouveau v1.18)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Suivez votre performance mois par mois.</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li>L'onglet <strong>Historique</strong> compile vos données pour vous montrer combien vous avez gagné (ou perdu) réellement chaque mois, net de vos versements.</li></ul></div>
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><GitCompare className="w-5 h-5 text-purple-500" /> Comparateur de Scénarios (Nouveau v1.19)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Comparez vos projections selon deux hypothèses :</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li><strong>Scénario Historique :</strong> Utilise votre TRI Global réel (calculé depuis votre tout premier versement). C'est votre "vitesse de croisière" réelle.</li><li><strong>Scénario Cible :</strong> Utilise le taux théorique que vous définissez (ex: 5%).</li></ul></div>
       </div>
     </div>
   );
 
-  return (
+return (
     <div className={`min-h-screen font-sans pb-20 w-full transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-gray-900'}`}>
       <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-30 shadow-md w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-xl cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setView('dashboard')}><div className="bg-blue-600 text-white p-1.5 rounded-lg"><Wallet className="w-6 h-6" /></div><span className="hidden sm:inline">Suivi Investissements</span></div>
+          <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-xl cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setView('dashboard')}>
+            <div className="bg-blue-600 text-white p-1.5 rounded-lg"><Wallet className="w-6 h-6" /></div>
+            <span className="hidden sm:inline">Suivi Investissements</span>
+          </div>
           <nav className="flex items-center gap-1 bg-gray-100 dark:bg-slate-700 p-1 rounded-xl overflow-x-auto">
             {['dashboard', 'brokers', 'simulation', 'history', 'faq'].map(k => (<button key={k} onClick={() => { setView(k); setSelectedBroker(null); setSelectedAccount(null); }} className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${view === k ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>{k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'simulation' ? 'Simul' : k === 'history' ? 'Historique' : 'Aide'}</button>))}
           </nav>
@@ -679,7 +701,7 @@ const InvestmentTrackerApp = () => {
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} />}{view === 'faq' && <FAQView />}</>}</main>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} />}{view === 'faq' && <FAQView />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
