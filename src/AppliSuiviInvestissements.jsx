@@ -73,8 +73,8 @@ const Toast = ({ message, type, onClose }) => {
 const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in border border-gray-200 dark:border-slate-700">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in border border-gray-200 dark:border-slate-700 relative">
         <div className="flex justify-between items-center p-4 border-b border-gray-100 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/50"><h3 className="font-bold text-lg text-gray-900 dark:text-white">{title}</h3><button onClick={onClose} className="p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500 dark:text-gray-400" /></button></div>
         <div className="p-6 overflow-y-auto max-h-[85vh] text-gray-900 dark:text-gray-100">{children}</div>
       </div>
@@ -316,7 +316,24 @@ const InvestmentTrackerApp = () => {
   }, [brokers]);
 
   // ACTIONS
-  const openModal = (type, data = null) => { setEditData(data); setModals({ ...modals, [type]: true }); };
+  // --- CORRECTIF V1.11 : Gestion explicite de la fermeture des autres fenêtres ---
+  const openModal = (type, data = null) => { 
+      setEditData(data);
+      // On force la fermeture de TOUTES les autres fenêtres avant d'ouvrir la nouvelle
+      // Cela évite que la fenêtre de "Liste des mouvements" ne reste ouverte par dessus le formulaire
+      setModals({ 
+          broker: false, 
+          account: false, 
+          snapshot: false, 
+          goal: false, 
+          movement: false, 
+          movementList: false, 
+          allocation: false, 
+          transfer: false,
+          [type]: true 
+      }); 
+  };
+  
   const closeModal = () => { setModals({ broker: false, account: false, snapshot: false, goal: false, movement: false, movementList: false, allocation: false, transfer: false }); setEditData(null); };
 
   const handleSaveBroker = (name) => {
@@ -357,7 +374,7 @@ const InvestmentTrackerApp = () => {
   }};
   const handleSaveMovement = (data) => {
       const newMove = { ...data, id: Date.now() };
-      const updated = brokers.map(b => b.id !== selectedBroker.id ? b : { ...b, accounts: b.accounts.map(a => a.id !== selectedAccount.id ? a : { ...a, movements: [...(a.movements || []), newMove].sort((x, y) => new Date(y.date) - new Date(x.date)) }) })
+      const updated = brokers.map(b => b.id !== selectedBroker.id ? b : { ...b, accounts: b.accounts.map(a => a.id !== selectedAccount.id ? a : { ...a, movements: [...(a.movements || []), newMove].sort((x, y) => new Date(y.date) - new Date(x.date)) }) };
       saveUserData(updated, undefined, undefined);
       const ub = updated.find(b => b.id === selectedBroker.id); setSelectedBroker(ub); setSelectedAccount(ub.accounts.find(a => a.id === selectedAccount.id)); showToast('Mouvement ajouté'); closeModal(); openModal('movementList');
   };
@@ -399,7 +416,7 @@ const InvestmentTrackerApp = () => {
     reader.readAsText(file);
   };
   const handleExport = () => {
-    const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.10" }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.11" }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a);
   };
 
