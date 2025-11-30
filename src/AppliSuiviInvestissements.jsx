@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare, Flag } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 
 // --- FIREBASE IMPORTS ---
@@ -160,29 +160,36 @@ const labelClass = "block text-sm font-bold text-gray-700 dark:text-gray-300 mb-
 
 // --- VUES SECONDAIRES (SIMULATION & HISTORIQUE) ---
 
-const SimulationView = ({ currentTotal, globalTRI }) => {
+const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal }) => {
     const [monthlyContribution, setMonthlyContribution] = useState(500);
-    const [years, setYears] = useState(15);
+    const [years, setYears] = useState(20);
     const [expectedReturn, setExpectedReturn] = useState(5); // %
 
     // Préparation des données de projection
-    const data = useMemo(() => {
+    const { data, goalHitTarget, goalHitHistorical } = useMemo(() => {
         let result = [];
         let capitalTarget = currentTotal;
         let capitalHistorical = currentTotal;
         let totalInvested = currentTotal;
         
+        let targetHit = null;
+        let historicalHit = null;
+
         const monthlyRateTarget = expectedReturn / 100 / 12;
-        // Si globalTRI est null ou invalide, on utilise 0 pour éviter le crash
         const monthlyRateHistorical = (globalTRI || 0) / 100 / 12; 
 
         for (let y = 0; y <= years; y++) {
             result.push({
-                year: `Année ${y}`,
+                year: y === 0 ? 'Aujourd\'hui' : `+${y} ans`,
+                yearNum: y, // Pour référence
                 capitalTarget: Math.round(capitalTarget),
                 capitalHistorical: globalTRI ? Math.round(capitalHistorical) : null,
                 invested: Math.round(totalInvested)
             });
+
+            // Détection croisement Objectif
+            if (!targetHit && capitalTarget >= patrimonyGoal) targetHit = y;
+            if (globalTRI && !historicalHit && capitalHistorical >= patrimonyGoal) historicalHit = y;
             
             // Calculer pour l'année suivante (12 mois)
             for (let m = 0; m < 12; m++) {
@@ -191,11 +198,10 @@ const SimulationView = ({ currentTotal, globalTRI }) => {
                 totalInvested += monthlyContribution;
             }
         }
-        return result;
-    }, [currentTotal, monthlyContribution, years, expectedReturn, globalTRI]);
+        return { data: result, goalHitTarget: targetHit, goalHitHistorical: historicalHit };
+    }, [currentTotal, monthlyContribution, years, expectedReturn, globalTRI, patrimonyGoal]);
 
     const finalTarget = data[data.length - 1].capitalTarget;
-    const finalHistorical = data[data.length - 1].capitalHistorical;
     const finalInvested = data[data.length - 1].invested;
 
     return (
@@ -227,6 +233,13 @@ const SimulationView = ({ currentTotal, globalTRI }) => {
                             <input type="range" min="1" max="40" value={years} onChange={e => setYears(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" />
                             <div className="text-center font-bold mt-2 text-blue-600 dark:text-blue-400">{years} ans</div>
                         </div>
+                        <div className="pt-2 border-t border-gray-100 dark:border-slate-700">
+                             <div className="flex justify-between items-center mb-1">
+                                <label className="text-xs font-bold text-gray-500">Objectif (Ligne Rouge)</label>
+                                <span className="text-xs font-bold text-red-500">{patrimonyGoal.toLocaleString('fr-FR')} €</span>
+                             </div>
+                             <p className="text-[10px] text-gray-400">Modifiable via le Dashboard</p>
+                        </div>
                     </div>
                     
                     {/* Indicateur de TRI Historique */}
@@ -237,13 +250,35 @@ const SimulationView = ({ currentTotal, globalTRI }) => {
                                 <span className="font-bold text-purple-900 dark:text-purple-200">Votre Performance Réelle</span>
                             </div>
                             <div className="text-3xl font-bold text-purple-700 dark:text-purple-300">{globalTRI.toFixed(2)}% <span className="text-sm font-normal text-gray-500">/an</span></div>
-                            <p className="text-xs text-purple-600 dark:text-purple-400 mt-2">Calculé sur l'ensemble de votre historique (backtest).</p>
                         </div>
                     )}
                 </div>
 
                 {/* Graphique */}
                 <div className="md:col-span-8 lg:col-span-9 space-y-6">
+                    {/* Résumé Objectif */}
+                    <div className="bg-gradient-to-r from-gray-50 to-white dark:from-slate-800 dark:to-slate-700/50 p-4 rounded-xl border border-gray-200 dark:border-slate-600 flex flex-col sm:flex-row gap-4 items-center justify-between">
+                         <div className="flex items-center gap-3">
+                             <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full"><Flag className="w-5 h-5 text-red-600 dark:text-red-400" /></div>
+                             <div>
+                                 <div className="text-sm font-bold text-gray-500 dark:text-gray-400">Objectif : {patrimonyGoal.toLocaleString('fr-FR')} €</div>
+                                 <div className="font-bold text-gray-800 dark:text-white">
+                                     {goalHitTarget 
+                                        ? `Atteint dans ${goalHitTarget} ans (Scénario Cible)` 
+                                        : <span className="text-orange-500">Non atteint sur {years} ans (Cible)</span>}
+                                 </div>
+                             </div>
+                         </div>
+                         {globalTRI && (
+                             <div className="text-right border-l pl-4 border-gray-200 dark:border-gray-600">
+                                 <div className="text-xs text-gray-500 dark:text-gray-400">Selon historique ({globalTRI.toFixed(1)}%)</div>
+                                 <div className="font-bold text-purple-600 dark:text-purple-400">
+                                     {goalHitHistorical ? `Atteint dans ${goalHitHistorical} ans` : 'Non atteint'}
+                                 </div>
+                             </div>
+                         )}
+                    </div>
+
                     <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="font-bold text-gray-800 dark:text-white">Projection Comparée</h3>
@@ -264,10 +299,21 @@ const SimulationView = ({ currentTotal, globalTRI }) => {
                                     <YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
                                     <Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor:'#1e293b', color:'#fff'}} formatter={(value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)} />
                                     <Legend />
+                                    
+                                    {/* Ligne Objectif */}
+                                    <ReferenceLine y={patrimonyGoal} stroke="#EF4444" strokeDasharray="3 3" label={{ value: 'Objectif', fill: '#EF4444', fontSize: 12, position: 'insideTopRight' }} />
+                                    
+                                    {/* Ligne Verticale si Objectif Atteint (Cible) */}
+                                    {goalHitTarget && (
+                                        <ReferenceLine x={`+${goalHitTarget} ans`} stroke="#3B82F6" strokeDasharray="3 3" label={{ value: 'Cible', fill: '#3B82F6', fontSize: 10, position: 'insideTopLeft' }} />
+                                    )}
+
                                     {/* Courbe Cible */}
                                     <Area type="monotone" dataKey="capitalTarget" name={`Scénario Cible (${expectedReturn}%)`} stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorTarget)" isAnimationActive={false} />
+                                    
                                     {/* Courbe Historique (si dispo) */}
                                     {globalTRI && <Area type="monotone" dataKey="capitalHistorical" name={`Scénario Historique (${globalTRI.toFixed(1)}%)`} stroke="#8B5CF6" strokeWidth={3} fillOpacity={1} fill="url(#colorHist)" isAnimationActive={false} />}
+                                    
                                     <Line type="monotone" dataKey="invested" name="Capital Versé" stroke="#10B981" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} dot={false} />
                                 </AreaChart>
                             </ResponsiveContainer>
@@ -283,15 +329,7 @@ const SimulationView = ({ currentTotal, globalTRI }) => {
                         <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
                              <div className="text-sm text-blue-800 dark:text-blue-300 mb-1">Final (Scénario Cible)</div>
                              <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{finalTarget.toLocaleString('fr-FR')} €</div>
-                             <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">+{ (finalTarget - finalInvested).toLocaleString('fr-FR') } € d'intérêts</div>
                         </div>
-                        {globalTRI && (
-                            <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-xl border border-purple-100 dark:border-purple-800">
-                                <div className="text-sm text-purple-800 dark:text-purple-300 mb-1">Final (Scénario Historique)</div>
-                                <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">{finalHistorical.toLocaleString('fr-FR')} €</div>
-                                <div className="text-xs text-purple-600 dark:text-purple-400 font-medium">+{ (finalHistorical - finalInvested).toLocaleString('fr-FR') } € d'intérêts</div>
-                            </div>
-                        )}
                     </div>
                 </div>
             </div>
@@ -626,7 +664,7 @@ const InvestmentTrackerApp = () => {
     reader.onload = (ev) => { try { const json = JSON.parse(ev.target.result); if(window.confirm('Remplacer les données Firebase par ce fichier ?')) { saveUserData(json.brokers || [], json.patrimonyGoal || 100000, json.targetAllocation || {}); showToast('Import réussi vers le Cloud'); } } catch { showToast('Fichier invalide', 'error'); } if(fileInputRef.current) fileInputRef.current.value = ''; };
     reader.readAsText(file);
   };
-  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.19" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.20" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
   if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
@@ -674,11 +712,12 @@ const InvestmentTrackerApp = () => {
       <div className="flex items-center gap-3 mb-6"><div className="bg-blue-600 p-2 rounded-lg text-white"><HelpCircle className="w-6 h-6" /></div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">Aide & Guide d'utilisation</h2></div>
       <div className="grid gap-6">
         <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><GitCompare className="w-5 h-5 text-purple-500" /> Comparateur de Scénarios (Nouveau v1.19)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Comparez vos projections selon deux hypothèses :</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li><strong>Scénario Historique :</strong> Utilise votre TRI Global réel (calculé depuis votre tout premier versement). C'est votre "vitesse de croisière" réelle.</li><li><strong>Scénario Cible :</strong> Utilise le taux théorique que vous définissez (ex: 5%).</li></ul></div>
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><Flag className="w-5 h-5 text-red-500" /> Objectif Patrimonial (Nouveau v1.20)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Visualisez la ligne d'arrivée.</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li>Dans la simulation, une ligne rouge horizontale représente votre objectif.</li><li>Le système calcule automatiquement quand vos courbes croiseront cette ligne.</li></ul></div>
       </div>
     </div>
   );
 
-return (
+  return (
     <div className={`min-h-screen font-sans pb-20 w-full transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-gray-900'}`}>
       <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-30 shadow-md w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
@@ -701,7 +740,7 @@ return (
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} />}{view === 'faq' && <FAQView />}</>}</main>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} />}{view === 'faq' && <FAQView />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
