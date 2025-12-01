@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare, Flag } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare, Flag, Eye, EyeOff } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 
 // --- FIREBASE IMPORTS ---
@@ -60,7 +60,7 @@ const CURRENCIES = [
   { code: 'BTC', symbol: '₿', label: 'Bitcoin' },
 ];
 
-// --- MOTEUR DE CALCULS ---
+// --- UTILS & CALCULS ---
 
 // Calcul du TRI (XIRR)
 const calculateXIRR = (movements, currentValue) => {
@@ -92,48 +92,122 @@ const calculateXIRR = (movements, currentValue) => {
     return null;
 };
 
-// --- HELPER AGREGATION MENSUELLE ---
+// Helper pour calculer le cumul des mouvements à une date précise
+const getInvestedUntilDate = (movements, dateStr) => {
+    const targetDate = new Date(dateStr).getTime();
+    return movements.reduce((acc, m) => {
+        const mDate = new Date(m.date).getTime();
+        if (mDate <= targetDate) {
+            if (m.type === 'deposit') return acc + parseFloat(m.amount);
+            if (m.type === 'interest') return acc + parseFloat(m.amount); // Considéré comme apport ou réinvestissement interne ? Usuellement non, mais dépend de la logique. Ici on suit la logique Investi = Versements nets.
+            // Pour le TRI 'interest' n'est pas un flux externe. Pour le "Capital Investi", est-ce qu'on compte les dividendes perçus ?
+            // Simplification : Capital Investi = Dépôts - Retraits (part capital). Les intérêts reçus restent dans la poche "Valeur" mais ne sont pas "Investis" de la poche de l'utilisateur.
+            // Correction : On ne compte QUE les dépôts et retraits pour la ligne "Investi" vs "Valeur".
+            if (m.type === 'deposit') return acc + parseFloat(m.amount);
+            // Si retrait, on retire le montant global ou partiel
+            if (m.type === 'withdrawal') {
+                return acc - parseFloat(m.capitalPart || m.amount);
+            }
+        }
+        return acc;
+    }, 0);
+};
+
+// Correctif fonction cumul (uniquement dépôts - retraits) pour graphiques
+const getNetInvestedUntilDate = (movements, dateStr) => {
+    const targetDate = new Date(dateStr).getTime();
+    return movements.reduce((acc, m) => {
+        const mDate = new Date(m.date).getTime();
+        if (mDate <= targetDate) {
+            if (m.type === 'deposit') return acc + parseFloat(m.amount);
+            if (m.type === 'withdrawal') return acc - parseFloat(m.capitalPart || m.amount);
+        }
+        return acc;
+    }, 0);
+};
+
+
+// --- HELPER AGREGATION MENSUELLE (CORRIGÉ) ---
 const processMonthlyStats = (brokers) => {
-    const allSnapshots = brokers.flatMap(b => b.accounts).flatMap(a => a.snapshots || []).map(s => s.date.substring(0, 7));
-    const uniqueMonths = [...new Set(allSnapshots)].sort();
+    // Collecter tous les mois pertinents (basé sur les snapshots ET les mouvements)
+    const snapshotDates = brokers.flatMap(b => b.accounts).flatMap(a => a.snapshots || []).map(s => s.date.substring(0, 7));
+    const movementDates = brokers.flatMap(b => b.accounts).flatMap(a => a.movements || []).map(m => m.date.substring(0, 7));
+    const uniqueMonths = [...new Set([...snapshotDates, ...movementDates])].sort();
+
     if (uniqueMonths.length === 0) return [];
 
     const monthlyStats = uniqueMonths.map((monthStr, index) => {
         const monthDate = new Date(monthStr + "-01");
-        const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+        const endOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0); // Dernier jour du mois
+        const endOfMonthStr = endOfMonth.toISOString().split('T')[0];
+
         let totalValue = 0;
-        let totalFlows = 0;
+        let totalFlows = 0; // Flux du mois
+        let totalInvestedAtMonthEnd = 0;
 
         brokers.forEach(broker => {
             broker.accounts.forEach(account => {
                 const rate = parseFloat(account.exchangeRate || 1);
-                const snaps = (account.snapshots || []).filter(s => s.date <= endOfMonth.toISOString().split('T')[0]);
+                
+                // 1. Valeur à la fin du mois (Dernier snapshot disponible à cette date ou avant)
+                const snaps = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
                 const lastSnap = snaps.sort((a,b) => new Date(b.date) - new Date(a.date))[0];
                 if (lastSnap) totalValue += parseFloat(lastSnap.amount) * rate;
 
+                // 2. Flux STRICTEMENT durant ce mois
                 const monthMoves = (account.movements || []).filter(m => m.date.startsWith(monthStr));
                 monthMoves.forEach(m => {
                     const amount = parseFloat(m.amount) * rate;
                     if (m.type === 'deposit') totalFlows += amount;
                     else if (m.type === 'withdrawal') totalFlows -= amount;
                 });
+
+                // 3. Capital Investi cumulé à la fin du mois
+                const investedAtDate = getNetInvestedUntilDate(account.movements || [], endOfMonthStr);
+                totalInvestedAtMonthEnd += investedAtDate * rate;
             });
         });
-        return { month: monthStr, displayDate: monthDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: totalValue, flow: totalFlows };
+
+        return { 
+            month: monthStr, 
+            displayDate: monthDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), 
+            value: totalValue, 
+            flow: totalFlows,
+            invested: totalInvestedAtMonthEnd 
+        };
     });
 
+    // Calcul des variations
     return monthlyStats.map((stat, i) => {
         if (i === 0) return { ...stat, variation: 0, performance: 0, yield: 0 };
+        
         const prev = monthlyStats[i - 1];
+        
+        // Variation brute du patrimoine
         const variation = stat.value - prev.value;
+        
+        // Performance Nette = Variation - Apports nets du mois
         const performance = variation - stat.flow;
+        
+        // Rendement = Performance / Valeur Précédente (Simplifié)
+        // Pour être plus précis on pourrait faire Performance / (PrevValue + (Flow/2)) (Méthode Dietz)
+        // Ici on garde simple : % sur la valeur de début de mois
         const yieldPct = prev.value > 0 ? (performance / prev.value) * 100 : 0;
+
         return { ...stat, variation, performance, yield: yieldPct };
     });
 };
 
 
 // --- COMPOSANTS UI ---
+
+// Composant pour flouter les montants
+const BlurMoney = ({ amount, currency = '€', privacyMode, className = "" }) => {
+    if (privacyMode) {
+        return <span className={`bg-gray-200 dark:bg-slate-700 text-transparent rounded px-1 select-none ${className}`}>00000</span>;
+    }
+    return <span className={className}>{amount.toLocaleString('fr-FR')} {currency}</span>;
+};
 
 const Toast = ({ message, type, onClose }) => {
   useEffect(() => { const timer = setTimeout(onClose, 3000); return () => clearTimeout(timer); }, [onClose]);
@@ -158,40 +232,32 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 const inputClass = "w-full border border-gray-300 dark:border-slate-600 p-2.5 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-colors";
 const labelClass = "block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1";
 
-// --- VUES SECONDAIRES (SIMULATION & HISTORIQUE) ---
+// --- VUES SECONDAIRES ---
 
-const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal }) => {
+const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal, privacyMode }) => {
     const [monthlyContribution, setMonthlyContribution] = useState(500);
     const [years, setYears] = useState(20);
-    const [expectedReturn, setExpectedReturn] = useState(5); // %
+    const [expectedReturn, setExpectedReturn] = useState(5);
 
-    // Préparation des données de projection
     const { data, goalHitTarget, goalHitHistorical } = useMemo(() => {
         let result = [];
         let capitalTarget = currentTotal;
         let capitalHistorical = currentTotal;
         let totalInvested = currentTotal;
-        
         let targetHit = null;
         let historicalHit = null;
-
         const monthlyRateTarget = expectedReturn / 100 / 12;
         const monthlyRateHistorical = (globalTRI || 0) / 100 / 12; 
 
         for (let y = 0; y <= years; y++) {
             result.push({
-                year: y === 0 ? 'Aujourd\'hui' : `+${y} ans`,
-                yearNum: y, // Pour référence
+                year: y === 0 ? 'Auj.' : `+${y}`,
                 capitalTarget: Math.round(capitalTarget),
                 capitalHistorical: globalTRI ? Math.round(capitalHistorical) : null,
                 invested: Math.round(totalInvested)
             });
-
-            // Détection croisement Objectif
             if (!targetHit && capitalTarget >= patrimonyGoal) targetHit = y;
             if (globalTRI && !historicalHit && capitalHistorical >= patrimonyGoal) historicalHit = y;
-            
-            // Calculer pour l'année suivante (12 mois)
             for (let m = 0; m < 12; m++) {
                 capitalTarget = (capitalTarget + monthlyContribution) * (1 + monthlyRateTarget);
                 capitalHistorical = (capitalHistorical + monthlyContribution) * (1 + monthlyRateHistorical);
@@ -210,126 +276,28 @@ const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal }) => {
                 <div className="bg-indigo-600 p-2 rounded-lg text-white"><Calculator className="w-6 h-6" /></div>
                 <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Simulateur & Comparateur</h2>
             </div>
-            
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                {/* Inputs */}
                 <div className="md:col-span-4 lg:col-span-3 space-y-4">
                     <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg space-y-4">
                         <h3 className="font-bold text-gray-800 dark:text-white border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres</h3>
-                        <div>
-                            <label className={labelClass}>Apport Initial (€)</label>
-                            <input type="number" value={currentTotal.toFixed(0)} disabled className={`${inputClass} bg-gray-100 dark:bg-slate-900 cursor-not-allowed opacity-70`} />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Épargne Mensuelle (€)</label>
-                            <input type="number" value={monthlyContribution} onChange={e => setMonthlyContribution(parseFloat(e.target.value) || 0)} className={inputClass} />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Rendement Cible (%)</label>
-                            <input type="number" step="0.1" value={expectedReturn} onChange={e => setExpectedReturn(parseFloat(e.target.value) || 0)} className={inputClass} />
-                        </div>
-                        <div>
-                            <label className={labelClass}>Durée (Années)</label>
-                            <input type="range" min="1" max="40" value={years} onChange={e => setYears(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" />
-                            <div className="text-center font-bold mt-2 text-blue-600 dark:text-blue-400">{years} ans</div>
-                        </div>
-                        <div className="pt-2 border-t border-gray-100 dark:border-slate-700">
-                             <div className="flex justify-between items-center mb-1">
-                                <label className="text-xs font-bold text-gray-500">Objectif (Ligne Rouge)</label>
-                                <span className="text-xs font-bold text-red-500">{patrimonyGoal.toLocaleString('fr-FR')} €</span>
-                             </div>
-                             <p className="text-[10px] text-gray-400">Modifiable via le Dashboard</p>
-                        </div>
+                        <div><label className={labelClass}>Apport Initial</label><div className={`${inputClass} bg-gray-100 dark:bg-slate-900 opacity-70 flex items-center`}><BlurMoney amount={currentTotal.toFixed(0)} privacyMode={privacyMode} /></div></div>
+                        <div><label className={labelClass}>Épargne Mensuelle (€)</label><input type="number" value={monthlyContribution} onChange={e => setMonthlyContribution(parseFloat(e.target.value) || 0)} className={inputClass} /></div>
+                        <div><label className={labelClass}>Rendement Cible (%)</label><input type="number" step="0.1" value={expectedReturn} onChange={e => setExpectedReturn(parseFloat(e.target.value) || 0)} className={inputClass} /></div>
+                        <div><label className={labelClass}>Durée (Années)</label><input type="range" min="1" max="40" value={years} onChange={e => setYears(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" /><div className="text-center font-bold mt-2 text-blue-600 dark:text-blue-400">{years} ans</div></div>
+                        <div className="pt-2 border-t border-gray-100 dark:border-slate-700"><div className="flex justify-between items-center mb-1"><label className="text-xs font-bold text-gray-500">Objectif (Ligne Rouge)</label><span className="text-xs font-bold text-red-500"><BlurMoney amount={patrimonyGoal} privacyMode={privacyMode} /></span></div></div>
                     </div>
-                    
-                    {/* Indicateur de TRI Historique */}
-                    {globalTRI !== null && (
-                        <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-xl border border-purple-100 dark:border-purple-800 shadow-sm animate-fade-in">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Activity className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                                <span className="font-bold text-purple-900 dark:text-purple-200">Votre Performance Réelle</span>
-                            </div>
-                            <div className="text-3xl font-bold text-purple-700 dark:text-purple-300">{globalTRI.toFixed(2)}% <span className="text-sm font-normal text-gray-500">/an</span></div>
-                        </div>
-                    )}
                 </div>
-
-                {/* Graphique */}
                 <div className="md:col-span-8 lg:col-span-9 space-y-6">
-                    {/* Résumé Objectif */}
                     <div className="bg-gradient-to-r from-gray-50 to-white dark:from-slate-800 dark:to-slate-700/50 p-4 rounded-xl border border-gray-200 dark:border-slate-600 flex flex-col sm:flex-row gap-4 items-center justify-between">
-                         <div className="flex items-center gap-3">
-                             <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full"><Flag className="w-5 h-5 text-red-600 dark:text-red-400" /></div>
-                             <div>
-                                 <div className="text-sm font-bold text-gray-500 dark:text-gray-400">Objectif : {patrimonyGoal.toLocaleString('fr-FR')} €</div>
-                                 <div className="font-bold text-gray-800 dark:text-white">
-                                     {goalHitTarget 
-                                        ? `Atteint dans ${goalHitTarget} ans (Scénario Cible)` 
-                                        : <span className="text-orange-500">Non atteint sur {years} ans (Cible)</span>}
-                                 </div>
-                             </div>
-                         </div>
-                         {globalTRI && (
-                             <div className="text-right border-l pl-4 border-gray-200 dark:border-gray-600">
-                                 <div className="text-xs text-gray-500 dark:text-gray-400">Selon historique ({globalTRI.toFixed(1)}%)</div>
-                                 <div className="font-bold text-purple-600 dark:text-purple-400">
-                                     {goalHitHistorical ? `Atteint dans ${goalHitHistorical} ans` : 'Non atteint'}
-                                 </div>
-                             </div>
-                         )}
+                         <div className="flex items-center gap-3"><div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full"><Flag className="w-5 h-5 text-red-600 dark:text-red-400" /></div><div><div className="text-sm font-bold text-gray-500 dark:text-gray-400">Objectif : <BlurMoney amount={patrimonyGoal} privacyMode={privacyMode} /></div><div className="font-bold text-gray-800 dark:text-white">{goalHitTarget ? `Atteint dans ${goalHitTarget} ans (Scénario Cible)` : <span className="text-orange-500">Non atteint sur {years} ans (Cible)</span>}</div></div></div>
+                         {globalTRI && (<div className="text-right border-l pl-4 border-gray-200 dark:border-gray-600"><div className="text-xs text-gray-500 dark:text-gray-400">Selon historique ({globalTRI.toFixed(1)}%)</div><div className="font-bold text-purple-600 dark:text-purple-400">{goalHitHistorical ? `Atteint dans ${goalHitHistorical} ans` : 'Non atteint'}</div></div>)}
                     </div>
-
                     <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-gray-800 dark:text-white">Projection Comparée</h3>
-                            <div className="flex gap-4 text-xs font-bold">
-                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-blue-500"></div>Cible ({expectedReturn}%)</div>
-                                {globalTRI && <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-purple-500"></div>Historique ({globalTRI.toFixed(1)}%)</div>}
-                            </div>
-                        </div>
-                        <div className="h-80">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={data}>
-                                    <defs>
-                                        <linearGradient id="colorTarget" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/></linearGradient>
-                                        <linearGradient id="colorHist" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/><stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/></linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                    <XAxis dataKey="year" fontSize={12} stroke="#9CA3AF" interval={years > 10 ? 4 : 1} />
-                                    <YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
-                                    <Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor:'#1e293b', color:'#fff'}} formatter={(value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)} />
-                                    <Legend />
-                                    
-                                    {/* Ligne Objectif */}
-                                    <ReferenceLine y={patrimonyGoal} stroke="#EF4444" strokeDasharray="3 3" label={{ value: 'Objectif', fill: '#EF4444', fontSize: 12, position: 'insideTopRight' }} />
-                                    
-                                    {/* Ligne Verticale si Objectif Atteint (Cible) */}
-                                    {goalHitTarget && (
-                                        <ReferenceLine x={`+${goalHitTarget} ans`} stroke="#3B82F6" strokeDasharray="3 3" label={{ value: 'Cible', fill: '#3B82F6', fontSize: 10, position: 'insideTopLeft' }} />
-                                    )}
-
-                                    {/* Courbe Cible */}
-                                    <Area type="monotone" dataKey="capitalTarget" name={`Scénario Cible (${expectedReturn}%)`} stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorTarget)" isAnimationActive={false} />
-                                    
-                                    {/* Courbe Historique (si dispo) */}
-                                    {globalTRI && <Area type="monotone" dataKey="capitalHistorical" name={`Scénario Historique (${globalTRI.toFixed(1)}%)`} stroke="#8B5CF6" strokeWidth={3} fillOpacity={1} fill="url(#colorHist)" isAnimationActive={false} />}
-                                    
-                                    <Line type="monotone" dataKey="invested" name="Capital Versé" stroke="#10B981" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} dot={false} />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </div>
+                        <div className="h-80"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data}><defs><linearGradient id="colorTarget" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/></linearGradient><linearGradient id="colorHist" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/><stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="year" fontSize={12} stroke="#9CA3AF" interval={years > 10 ? 4 : 1} /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '****' : `${(v/1000).toFixed(0)}k`} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor:'#1e293b', color:'#fff'}} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value)} /><Legend /><ReferenceLine y={patrimonyGoal} stroke="#EF4444" strokeDasharray="3 3" /><Area type="monotone" dataKey="capitalTarget" name={`Scénario Cible (${expectedReturn}%)`} stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorTarget)" isAnimationActive={false} />{globalTRI && <Area type="monotone" dataKey="capitalHistorical" name={`Scénario Historique (${globalTRI.toFixed(1)}%)`} stroke="#8B5CF6" strokeWidth={3} fillOpacity={1} fill="url(#colorHist)" isAnimationActive={false} />}<Line type="monotone" dataKey="invested" name="Capital Versé" stroke="#10B981" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} dot={false} /></AreaChart></ResponsiveContainer></div>
                     </div>
-
-                    {/* Résultats Chiffrés */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="bg-gray-50 dark:bg-slate-700/50 p-4 rounded-xl border border-gray-200 dark:border-slate-600">
-                             <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Capital Investi (Total)</div>
-                             <div className="text-2xl font-bold text-gray-700 dark:text-gray-200">{finalInvested.toLocaleString('fr-FR')} €</div>
-                        </div>
-                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800">
-                             <div className="text-sm text-blue-800 dark:text-blue-300 mb-1">Final (Scénario Cible)</div>
-                             <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{finalTarget.toLocaleString('fr-FR')} €</div>
-                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="bg-gray-50 dark:bg-slate-700/50 p-4 rounded-xl border border-gray-200 dark:border-slate-600"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Capital Investi (Total)</div><div className="text-2xl font-bold text-gray-700 dark:text-gray-200"><BlurMoney amount={finalInvested} privacyMode={privacyMode} /></div></div>
+                        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800"><div className="text-sm text-blue-800 dark:text-blue-300 mb-1">Final (Scénario Cible)</div><div className="text-2xl font-bold text-blue-700 dark:text-blue-400"><BlurMoney amount={finalTarget} privacyMode={privacyMode} /></div></div>
                     </div>
                 </div>
             </div>
@@ -337,7 +305,7 @@ const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal }) => {
     );
 };
 
-const HistoryView = ({ brokers, darkMode }) => {
+const HistoryView = ({ brokers, darkMode, privacyMode }) => {
     const stats = useMemo(() => processMonthlyStats(brokers), [brokers]);
 
     if (!stats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
@@ -348,57 +316,26 @@ const HistoryView = ({ brokers, darkMode }) => {
                 <div className="bg-orange-500 p-2 rounded-lg text-white"><Calendar className="w-6 h-6" /></div>
                 <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Rapport Mensuel</h2>
             </div>
-
-            {/* Graphique Performance Mensuelle */}
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
-                <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={stats}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                            <XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" />
-                            <YAxis fontSize={12} stroke="#9CA3AF" />
-                            <Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} cursor={{fill: 'transparent'}} />
-                            <ReferenceLine y={0} stroke="#9CA3AF" />
-                            <Bar dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" isAnimationActive={false}>
-                                {stats.map((entry, index) => (
-                                    <cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
+                <div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={stats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : v} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} cursor={{fill: 'transparent'}} /><ReferenceLine y={0} stroke="#9CA3AF" /><Bar dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" isAnimationActive={false}>{stats.map((entry, index) => (<cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}</Bar></BarChart></ResponsiveContainer></div>
             </div>
-
-            {/* Tableau Détaillé */}
             <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
                         <thead className="bg-gray-50 dark:bg-slate-700 text-gray-500 dark:text-gray-300 font-bold">
-                            <tr>
-                                <th className="p-4">Mois</th>
-                                <th className="p-4 text-right">Valeur Fin de Mois</th>
-                                <th className="p-4 text-right">Flux (Dépôts/Retraits)</th>
-                                <th className="p-4 text-right">Variation Totale</th>
-                                <th className="p-4 text-right">Performance Nette</th>
-                                <th className="p-4 text-right">Rendement</th>
-                            </tr>
+                            <tr><th className="p-4">Mois</th><th className="p-4 text-right">Valeur Fin</th><th className="p-4 text-right">Investi Total</th><th className="p-4 text-right">Flux Mois</th><th className="p-4 text-right">Variation</th><th className="p-4 text-right">Perf. Nette</th><th className="p-4 text-right">Rendement</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
                             {[...stats].reverse().map((stat, i) => (
                                 <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
                                     <td className="p-4 font-bold text-gray-800 dark:text-white">{stat.displayDate}</td>
-                                    <td className="p-4 text-right font-medium text-gray-900 dark:text-white">{stat.value.toLocaleString('fr-FR', {maximumFractionDigits:0})} €</td>
-                                    <td className={`p-4 text-right font-medium ${stat.flow > 0 ? 'text-blue-600' : stat.flow < 0 ? 'text-orange-500' : 'text-gray-400'}`}>
-                                        {stat.flow > 0 ? '+' : ''}{stat.flow !== 0 ? stat.flow.toLocaleString('fr-FR', {maximumFractionDigits:0}) : '-'} €
-                                    </td>
-                                    <td className="p-4 text-right text-gray-500 dark:text-gray-400">{stat.variation > 0 ? '+' : ''}{stat.variation.toLocaleString('fr-FR', {maximumFractionDigits:0})} €</td>
-                                    <td className={`p-4 text-right font-bold ${stat.performance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                                        {stat.performance > 0 ? '+' : ''}{stat.performance.toLocaleString('fr-FR', {maximumFractionDigits:0})} €
-                                    </td>
-                                    <td className={`p-4 text-right font-bold ${stat.yield >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                                        {stat.yield > 0 ? '+' : ''}{stat.yield.toFixed(2)}%
-                                    </td>
+                                    <td className="p-4 text-right font-medium text-gray-900 dark:text-white"><BlurMoney amount={stat.value} privacyMode={privacyMode} /></td>
+                                    <td className="p-4 text-right text-gray-500 dark:text-gray-400"><BlurMoney amount={stat.invested} privacyMode={privacyMode} /></td>
+                                    <td className={`p-4 text-right font-medium ${stat.flow > 0 ? 'text-blue-600' : stat.flow < 0 ? 'text-orange-500' : 'text-gray-400'}`}>{stat.flow > 0 ? '+' : ''}{stat.flow !== 0 ? <BlurMoney amount={stat.flow} privacyMode={privacyMode} /> : '-'}</td>
+                                    <td className="p-4 text-right text-gray-500 dark:text-gray-400">{stat.variation > 0 ? '+' : ''}<BlurMoney amount={stat.variation} privacyMode={privacyMode} /></td>
+                                    <td className={`p-4 text-right font-bold ${stat.performance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{stat.performance > 0 ? '+' : ''}<BlurMoney amount={stat.performance} privacyMode={privacyMode} /></td>
+                                    <td className={`p-4 text-right font-bold ${stat.yield >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{stat.yield > 0 ? '+' : ''}{stat.yield.toFixed(2)}%</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -417,6 +354,7 @@ const InvestmentTrackerApp = () => {
   const [dataLoading, setDataLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [privacyMode, setPrivacyMode] = useState(false);
 
   const [brokers, setBrokers] = useState([]);
   const [patrimonyGoal, setPatrimonyGoal] = useState(100000);
@@ -664,7 +602,7 @@ const InvestmentTrackerApp = () => {
     reader.onload = (ev) => { try { const json = JSON.parse(ev.target.result); if(window.confirm('Remplacer les données Firebase par ce fichier ?')) { saveUserData(json.brokers || [], json.patrimonyGoal || 100000, json.targetAllocation || {}); showToast('Import réussi vers le Cloud'); } } catch { showToast('Fichier invalide', 'error'); } if(fileInputRef.current) fileInputRef.current.value = ''; };
     reader.readAsText(file);
   };
-  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.20" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.21" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
   if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
@@ -673,7 +611,7 @@ const InvestmentTrackerApp = () => {
   const BrokersView = () => (
     <div className="space-y-6 w-full animate-fade-in">
         <div className="flex justify-between items-center"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">Mes Courtiers</h2><button onClick={() => openModal('broker')} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 shadow-lg font-medium transition-transform active:scale-95"><PlusCircle className="w-5 h-5" /> Ajouter</button></div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{brokers.map(b => (<div key={b.id} onClick={() => { setSelectedBroker(b); setView('accounts'); }} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg hover:shadow-2xl cursor-pointer group relative overflow-hidden transition-all"><div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 dark:bg-slate-700 rounded-bl-full -mr-12 -mt-12 group-hover:scale-110 transition-transform"></div><div className="relative flex justify-between items-start mb-6"><div className="flex items-center gap-3"><div className="p-3 bg-blue-50 dark:bg-slate-700 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors"><Building2 className="w-6 h-6 dark:text-blue-300 group-hover:text-white" /></div><h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 truncate max-w-[150px]">{b.name}</h3></div><div className="flex gap-1 z-10"><button onClick={e => { e.stopPropagation(); openModal('broker', b); }} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-600 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={e => { e.stopPropagation(); deleteBroker(b.id); }} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div><div className="relative"><div className="text-3xl font-bold text-gray-900 dark:text-white">{getTotalByBrokerInEur(b).toLocaleString('fr-FR', {minimumFractionDigits: 0})} €</div><div className="text-sm text-gray-500 dark:text-gray-400 font-medium mt-1">{b.accounts.length} compte(s)</div></div></div>))}</div>{!brokers.length && <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-gray-300 dark:border-slate-700"><Building2 className="w-16 h-16 text-gray-300 dark:text-slate-600 mx-auto mb-4" /><p className="text-gray-500 dark:text-gray-400 font-medium">Aucun courtier enregistré</p></div>}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{brokers.map(b => (<div key={b.id} onClick={() => { setSelectedBroker(b); setView('accounts'); }} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg hover:shadow-2xl cursor-pointer group relative overflow-hidden transition-all"><div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 dark:bg-slate-700 rounded-bl-full -mr-12 -mt-12 group-hover:scale-110 transition-transform"></div><div className="relative flex justify-between items-start mb-6"><div className="flex items-center gap-3"><div className="p-3 bg-blue-50 dark:bg-slate-700 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors"><Building2 className="w-6 h-6 dark:text-blue-300 group-hover:text-white" /></div><h3 className="font-bold text-lg text-gray-800 dark:text-gray-100 truncate max-w-[150px]">{b.name}</h3></div><div className="flex gap-1 z-10"><button onClick={e => { e.stopPropagation(); openModal('broker', b); }} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-600 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={e => { e.stopPropagation(); deleteBroker(b.id); }} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg text-gray-400 hover:text-red-600 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div><div className="relative"><div className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={getTotalByBrokerInEur(b)} privacyMode={privacyMode} /></div><div className="text-sm text-gray-500 dark:text-gray-400 font-medium mt-1">{b.accounts.length} compte(s)</div></div></div>))}</div>{!brokers.length && <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-xl border-2 border-dashed border-gray-300 dark:border-slate-700"><Building2 className="w-16 h-16 text-gray-300 dark:text-slate-600 mx-auto mb-4" /><p className="text-gray-500 dark:text-gray-400 font-medium">Aucun courtier enregistré</p></div>}
     </div>
   );
   const AccountsView = () => {
@@ -681,15 +619,31 @@ const InvestmentTrackerApp = () => {
     return (
       <div className="space-y-6 w-full animate-fade-in">
         <div className="flex items-center gap-4"><button onClick={() => { setView('brokers'); setSelectedBroker(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedBroker.name}</h2></div></div>
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-2xl text-white shadow-xl flex justify-between items-center"><div><div className="text-blue-100 font-medium mb-2">Valorisation totale (EUR)</div><div className="text-5xl font-bold">{getTotalByBrokerInEur(selectedBroker).toLocaleString('fr-FR', {minimumFractionDigits: 2})} €</div></div><div className="hidden sm:block p-4 bg-white/10 rounded-2xl"><Wallet className="w-12 h-12 text-white" /></div></div>
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-2xl text-white shadow-xl flex justify-between items-center"><div><div className="text-blue-100 font-medium mb-2">Valorisation totale (EUR)</div><div className="text-5xl font-bold"><BlurMoney amount={getTotalByBrokerInEur(selectedBroker)} privacyMode={privacyMode} /></div></div><div className="hidden sm:block p-4 bg-white/10 rounded-2xl"><Wallet className="w-12 h-12 text-white" /></div></div>
         <div className="flex justify-between items-center mt-8"><h3 className="text-xl font-bold text-gray-800 dark:text-white">Comptes</h3><div className="flex items-center gap-3"><button onClick={() => openModal('account')} className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 px-4 py-2 rounded-lg shadow-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"><PlusCircle className="w-5 h-5 text-blue-600" /> Nouveau compte</button></div></div>
-        <div className="grid gap-4">{sortedAccounts.map(acc => { const type = ACCOUNT_TYPES.find(t => t.value === acc.type); const currency = acc.currency || 'EUR'; const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; const investedTotal = getAccountInvestedTotalRaw(acc); return (<div key={acc.id} onClick={() => { setSelectedAccount(acc); setView('snapshots'); }} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg hover:shadow-xl cursor-pointer flex justify-between items-center group transition-all"><div className="flex items-center gap-5"><div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-gray-50 dark:bg-slate-700 border dark:border-slate-600" style={{color: type?.color}}><Wallet className="w-7 h-7" /></div><div><div className="flex items-center gap-3 mb-1"><h4 className="font-bold text-lg text-gray-900 dark:text-white">{acc.name}</h4><span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-300 font-medium border dark:border-slate-600">{type?.label}</span>{currency !== 'EUR' && <span className="text-xs bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 px-2 py-0.5 rounded-full text-orange-700 dark:text-orange-300 font-bold">{currency}</span>}</div><div className="flex items-baseline gap-3"><span className="text-xl font-bold text-gray-800 dark:text-gray-200">{getAccountCurrentValueRaw(acc).toLocaleString('fr-FR', {minimumFractionDigits: 2})} {symbol}</span><PerformanceBadge current={getAccountCurrentValueRaw(acc)} invested={investedTotal} tri={acc.tri} /></div></div></div><div className="flex items-center gap-2"><button onClick={e => { e.stopPropagation(); openModal('account', acc); }} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-600 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={e => { e.stopPropagation(); deleteAccount(selectedBroker.id, acc.id); }} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg text-gray-400 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button><ChevronRight className="w-5 h-5 text-gray-300 dark:text-gray-500 ml-2" /></div></div>); })}</div>
+        <div className="grid gap-4">{sortedAccounts.map(acc => { const type = ACCOUNT_TYPES.find(t => t.value === acc.type); const currency = acc.currency || 'EUR'; const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; const investedTotal = getAccountInvestedTotalRaw(acc); return (<div key={acc.id} onClick={() => { setSelectedAccount(acc); setView('snapshots'); }} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg hover:shadow-xl cursor-pointer flex justify-between items-center group transition-all"><div className="flex items-center gap-5"><div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-gray-50 dark:bg-slate-700 border dark:border-slate-600" style={{color: type?.color}}><Wallet className="w-7 h-7" /></div><div><div className="flex items-center gap-3 mb-1"><h4 className="font-bold text-lg text-gray-900 dark:text-white">{acc.name}</h4><span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-300 font-medium border dark:border-slate-600">{type?.label}</span>{currency !== 'EUR' && <span className="text-xs bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 px-2 py-0.5 rounded-full text-orange-700 dark:text-orange-300 font-bold">{currency}</span>}</div><div className="flex items-baseline gap-3"><span className="text-xl font-bold text-gray-800 dark:text-gray-200"><BlurMoney amount={getAccountCurrentValueRaw(acc)} currency={symbol} privacyMode={privacyMode} /></span><PerformanceBadge current={getAccountCurrentValueRaw(acc)} invested={investedTotal} tri={acc.tri} /></div></div></div><div className="flex items-center gap-2"><button onClick={e => { e.stopPropagation(); openModal('account', acc); }} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-600 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={e => { e.stopPropagation(); deleteAccount(selectedBroker.id, acc.id); }} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg text-gray-400 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button><ChevronRight className="w-5 h-5 text-gray-300 dark:text-gray-500 ml-2" /></div></div>); })}</div>
       </div>
     );
   };
   const SnapshotsView = () => {
-    const snapshots = selectedAccount.snapshots || []; const currentVal = getAccountCurrentValueRaw(selectedAccount); const investedVal = getAccountInvestedTotalRaw(selectedAccount); const lastSnap = getLatestSnapshot(selectedAccount); const chartData = snapshots.map(s => ({ date: new Date(s.date).toLocaleDateString('fr-FR', {month:'short', year:'2-digit'}), val: parseFloat(s.amount) })); const dist = lastSnap?.categories?.map(c => ({ ...c, ...(INVESTMENT_CATEGORIES.find(i => i.value === c.type)) })).sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount)) || []; const currency = selectedAccount.currency || 'EUR'; const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; const tri = calculateXIRR(selectedAccount.movements, currentVal);
-    return (<div className="space-y-6 animate-fade-in w-full"><div className="flex items-center gap-4"><button onClick={() => { setView('accounts'); setSelectedAccount(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><div className="flex items-center gap-2"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedAccount.name}</h2>{currency !== 'EUR' && <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 text-xs font-bold rounded">{currency}</span>}</div><p className="text-gray-500 dark:text-gray-400">{selectedBroker.name}</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Valeur Actuelle</div><div className="text-2xl font-bold text-gray-900 dark:text-white">{currentVal.toLocaleString('fr-FR', {minimumFractionDigits: 2})} {symbol}</div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg cursor-pointer hover:border-blue-300 dark:hover:border-blue-500 group" onClick={() => openModal('movementList')}><div className="text-sm text-gray-500 dark:text-gray-400 mb-1 flex items-center justify-between">Capital Investi <Edit2 className="w-3 h-3 text-gray-300 group-hover:text-blue-500 transition-colors" /></div><div className="text-2xl font-bold text-gray-900 dark:text-white">{investedVal.toLocaleString('fr-FR')} {symbol}</div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Plus/Moins Value</div><div className="text-2xl font-bold text-gray-900 dark:text-white">{investedVal > 0 ? (currentVal - investedVal).toLocaleString('fr-FR', {minimumFractionDigits: 2}) : '-'} {symbol}</div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Performance</div><div className="text-2xl font-bold flex items-center"><PerformanceBadge current={currentVal} invested={investedVal} tri={tri} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg h-fit"><h3 className="font-bold mb-4 text-gray-800 dark:text-white">Allocation</h3>{dist.length > 0 ? (<div className="space-y-3 pt-2">{dist.map((d, i) => (<div key={i} className="flex justify-between items-center text-sm"><span className="flex items-center text-gray-600 dark:text-gray-300 font-medium"><div className="w-2 h-2 rounded-full mr-3" style={{backgroundColor: d.color}}></div>{d.label}</span><span className="font-bold text-gray-800 dark:text-white">{parseFloat(d.amount).toLocaleString('fr-FR')} {symbol}</span></div>))}</div>) : <p className="text-gray-400 text-sm">Pas de données</p>}</div><div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Évolution ({currency})</h3><div className="h-72">{chartData.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => `${(v/1000).toFixed(0)}k`} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} /><Line isAnimationActive={false} type="monotone" dataKey="val" stroke="#2563EB" strokeWidth={3} dot={{r:3}} activeDot={{r:6}} /></LineChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-lg">Ajoutez au moins 2 valorisations</div>}</div></div></div><div className="flex gap-4 mt-8"><button onClick={() => openModal('movementList')} className="flex-1 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 px-4 py-3 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/30 font-bold flex items-center justify-center gap-2 shadow-sm transition-all"><History className="w-5 h-5" /> Mouvements</button><button onClick={() => openModal('snapshot')} className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 shadow-lg font-bold flex items-center justify-center gap-2 transition-all"><PlusCircle className="w-5 h-5" /> Nouvelle Valorisation</button></div><div className="mt-6 space-y-3"><h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Historique de valorisation</h3>{[...snapshots].reverse().map((s, i) => { const prev = snapshots[snapshots.length - 2 - i]; const diff = prev ? parseFloat(s.amount) - parseFloat(prev.amount) : 0; return (<div key={s.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex justify-between items-center hover:shadow-lg transition-all"><div><div className="font-bold text-gray-800 dark:text-white">{new Date(s.date).toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'})}</div><div className="text-sm flex items-center mt-1"><span className="font-bold text-gray-700 dark:text-gray-300 mr-3">{parseFloat(s.amount).toLocaleString('fr-FR')} {symbol}</span>{prev && <span className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded ${diff >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>{diff > 0 ? '+' : ''}{diff.toLocaleString('fr-FR')} {symbol}</span>}</div></div><div className="flex gap-1"><button onClick={() => openModal('snapshot', s)} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg"><Edit2 className="w-5 h-5" /></button><button onClick={() => deleteSnapshot(selectedBroker.id, selectedAccount.id, s.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"><Trash2 className="w-5 h-5" /></button></div></div>); })}</div></div>);
+    const snapshots = selectedAccount.snapshots || []; 
+    const currentVal = getAccountCurrentValueRaw(selectedAccount); 
+    const investedVal = getAccountInvestedTotalRaw(selectedAccount); 
+    const lastSnap = getLatestSnapshot(selectedAccount); 
+    
+    // CHART DATA: Ajouter 'invested' pour chaque point
+    const chartData = snapshots.map(s => ({ 
+        date: new Date(s.date).toLocaleDateString('fr-FR', {month:'short', year:'2-digit'}), 
+        val: parseFloat(s.amount),
+        invested: getNetInvestedUntilDate(selectedAccount.movements || [], s.date)
+    })); 
+    
+    const dist = lastSnap?.categories?.map(c => ({ ...c, ...(INVESTMENT_CATEGORIES.find(i => i.value === c.type)) })).sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount)) || []; 
+    const currency = selectedAccount.currency || 'EUR'; 
+    const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; 
+    const tri = calculateXIRR(selectedAccount.movements, currentVal);
+
+    return (<div className="space-y-6 animate-fade-in w-full"><div className="flex items-center gap-4"><button onClick={() => { setView('accounts'); setSelectedAccount(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><div className="flex items-center gap-2"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedAccount.name}</h2>{currency !== 'EUR' && <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 text-xs font-bold rounded">{currency}</span>}</div><p className="text-gray-500 dark:text-gray-400">{selectedBroker.name}</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Valeur Actuelle</div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={currentVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg cursor-pointer hover:border-blue-300 dark:hover:border-blue-500 group" onClick={() => openModal('movementList')}><div className="text-sm text-gray-500 dark:text-gray-400 mb-1 flex items-center justify-between">Capital Investi <Edit2 className="w-3 h-3 text-gray-300 group-hover:text-blue-500 transition-colors" /></div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={investedVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Plus/Moins Value</div><div className="text-2xl font-bold text-gray-900 dark:text-white">{investedVal > 0 ? (currentVal - investedVal > 0 ? '+' : '') : ''} <BlurMoney amount={investedVal > 0 ? (currentVal - investedVal) : 0} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Performance</div><div className="text-2xl font-bold flex items-center"><PerformanceBadge current={currentVal} invested={investedVal} tri={tri} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg h-fit"><h3 className="font-bold mb-4 text-gray-800 dark:text-white">Allocation</h3>{dist.length > 0 ? (<div className="space-y-3 pt-2">{dist.map((d, i) => (<div key={i} className="flex justify-between items-center text-sm"><span className="flex items-center text-gray-600 dark:text-gray-300 font-medium"><div className="w-2 h-2 rounded-full mr-3" style={{backgroundColor: d.color}}></div>{d.label}</span><span className="font-bold text-gray-800 dark:text-white"><BlurMoney amount={parseFloat(d.amount)} currency={symbol} privacyMode={privacyMode} /></span></div>))}</div>) : <p className="text-gray-400 text-sm">Pas de données</p>}</div><div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Évolution ({currency})</h3><div className="h-72">{chartData.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : `${(v/1000).toFixed(0)}k`} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '****' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} /><Legend /><Line isAnimationActive={false} name="Valeur" type="monotone" dataKey="val" stroke="#2563EB" strokeWidth={3} dot={{r:3}} activeDot={{r:6}} /><Line isAnimationActive={false} name="Investi" type="monotone" dataKey="invested" stroke="#10B981" strokeWidth={2} strokeDasharray="5 5" dot={false} /></LineChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-lg">Ajoutez au moins 2 valorisations</div>}</div></div></div><div className="flex gap-4 mt-8"><button onClick={() => openModal('movementList')} className="flex-1 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 px-4 py-3 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/30 font-bold flex items-center justify-center gap-2 shadow-sm transition-all"><History className="w-5 h-5" /> Mouvements</button><button onClick={() => openModal('snapshot')} className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 shadow-lg font-bold flex items-center justify-center gap-2 transition-all"><PlusCircle className="w-5 h-5" /> Nouvelle Valorisation</button></div><div className="mt-6 space-y-3"><h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Historique de valorisation</h3>{[...snapshots].reverse().map((s, i) => { const prev = snapshots[snapshots.length - 2 - i]; const diff = prev ? parseFloat(s.amount) - parseFloat(prev.amount) : 0; return (<div key={s.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex justify-between items-center hover:shadow-lg transition-all"><div><div className="font-bold text-gray-800 dark:text-white">{new Date(s.date).toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'})}</div><div className="text-sm flex items-center mt-1"><span className="font-bold text-gray-700 dark:text-gray-300 mr-3"><BlurMoney amount={parseFloat(s.amount)} currency={symbol} privacyMode={privacyMode} /></span>{prev && <span className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded ${diff >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>{diff > 0 ? '+' : ''}<BlurMoney amount={diff} currency={symbol} privacyMode={privacyMode} /></span>}</div></div><div className="flex gap-1"><button onClick={() => openModal('snapshot', s)} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg"><Edit2 className="w-5 h-5" /></button><button onClick={() => deleteSnapshot(selectedBroker.id, selectedAccount.id, s.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"><Trash2 className="w-5 h-5" /></button></div></div>); })}</div></div>);
   };
   const Dashboard = () => {
     const allSnapshots = brokers.flatMap(b => b.accounts.map(a => ({ account: a, snapshots: a.snapshots || [] }))).flatMap(item => item.snapshots.map(s => ({ ...s, rate: item.account.exchangeRate || 1 }))); const allDates = [...new Set(allSnapshots.map(s => s.date))].sort();
@@ -704,15 +658,15 @@ const InvestmentTrackerApp = () => {
         }
         return mSum;
     }, 0); return accSum + (totalMovements * parseFloat(acc.exchangeRate || 1)); }, 0); }, 0); return { date: new Date(date).toLocaleDateString('fr-FR', {month:'short', year:'2-digit'}), valeur: totalAtDate, investi: investedAtDate > 0 ? investedAtDate : 0 }; }); const progress = Math.min((totalPatrimony / patrimonyGoal) * 100, 100);
-    return (<div className="space-y-8 animate-fade-in w-full"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg relative overflow-hidden"><div className="flex justify-between items-center mb-4 relative z-10"><div><h2 className="text-lg font-bold text-gray-800 dark:text-white">Objectif Patrimonial</h2><p className="text-gray-500 dark:text-gray-400 text-sm">Progression vers votre cible</p></div><button onClick={() => openModal('goal')} className="p-2 bg-gray-50 dark:bg-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 transition-colors"><Target className="w-5 h-5" /></button></div><div className="relative z-10"><div className="flex justify-between items-end mb-2"><span className="text-3xl font-bold text-gray-900 dark:text-white">{totalPatrimony.toLocaleString('fr-FR', {maximumFractionDigits:0})} €</span><span className="text-sm font-semibold text-gray-500 dark:text-gray-400">{patrimonyGoal.toLocaleString('fr-FR')} €</span></div><div className="w-full bg-gray-100 dark:bg-slate-700 rounded-full h-4 overflow-hidden border border-gray-200 dark:border-slate-600"><div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-1000 ease-out" style={{width: `${progress}%`}}></div></div><div className="text-right text-xs font-bold text-blue-600 dark:text-blue-400 mt-1">{progress.toFixed(1)}% atteint</div></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-6"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Patrimoine Total</div><div className="text-3xl font-bold text-gray-900 dark:text-white">{totalPatrimony.toLocaleString('fr-FR', {minimumFractionDigits: 0})} €</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Capital Investi</div><div className="text-3xl font-bold text-gray-700 dark:text-gray-200">{totalInvestedGlobal.toLocaleString('fr-FR', {minimumFractionDigits: 0})} €</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Plus/Moins Value</div><div className={`text-3xl font-bold ${totalNetGainLoss >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>{totalNetGainLoss >= 0 ? '+' : ''}{totalNetGainLoss.toLocaleString('fr-FR', {minimumFractionDigits: 0})} €</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Performance Globale</div><div className="text-3xl font-bold"><PerformanceBadge current={totalPatrimony} invested={totalInvestedGlobal} tri={globalTRI} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3><div className="h-72">{evolution.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><AreaChart data={evolution}><defs><linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.1}/><stop offset="95%" stopColor="#10B981" stopOpacity={0}/></linearGradient><linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64748B" stopOpacity={0.1}/><stop offset="95%" stopColor="#64748B" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => (v/1000).toFixed(0)+'k'} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} /><Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" /><Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" /></AreaChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Ajoutez des valorisations pour voir le graphique</div>}</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col"><div className="flex justify-between items-center mb-6"><h3 className="font-bold flex items-center gap-2 text-lg text-gray-800 dark:text-white"><PieChartIcon className="w-5 h-5 text-blue-500" /> Répartition & Cibles</h3><button onClick={() => openModal('allocation')} className="text-xs bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors"><Target className="w-3 h-3" /> Définir Cible</button></div><div className="space-y-5 overflow-y-auto pr-2 flex-1">{globalCategoryDistribution.length > 0 ? globalCategoryDistribution.map((d, i) => { const targetPct = targetAllocation[d.type] || 0; const idealAmount = totalPatrimony * (targetPct / 100); const delta = idealAmount - d.value; const needsAction = Math.abs(delta) > 100; return (<div key={i} className="group"><div className="flex justify-between text-sm mb-1.5"><span className="font-medium text-gray-700 dark:text-gray-300 flex items-center"><div className="w-2 h-2 rounded-full mr-2" style={{backgroundColor: d.color}}></div>{d.label}</span><div className="text-right"><span className="font-bold text-gray-900 dark:text-white block">{d.value.toLocaleString('fr-FR', {maximumFractionDigits:0})} € <span className="text-gray-400 font-normal">({d.percentage}%)</span></span></div></div><div className="relative w-full h-2.5 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden"><div className="absolute top-0 left-0 h-full transition-all duration-500" style={{width: `${d.percentage}%`, backgroundColor: d.color, opacity: 0.8}}></div>{targetPct > 0 && <div className="absolute top-0 w-1 h-full bg-black/50 dark:bg-white/50 z-10" style={{left: `${targetPct}%`}}></div>}</div>{targetPct > 0 && (<div className="flex justify-between items-center mt-1 text-xs"><span className="text-gray-400">Cible : {targetPct}%</span>{needsAction && (<span className={`font-bold ${delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-500 dark:text-red-400'} flex items-center gap-1`}>{delta > 0 ? 'Acheter' : 'Vendre'} {Math.abs(delta).toLocaleString('fr-FR', {maximumFractionDigits:0})} €</span>)}</div>)}</div>); }) : <div className="h-full flex items-center justify-center text-gray-400 py-20">Aucune donnée</div>}</div></div></div></div>);
+    return (<div className="space-y-8 animate-fade-in w-full"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg relative overflow-hidden"><div className="flex justify-between items-center mb-4 relative z-10"><div><h2 className="text-lg font-bold text-gray-800 dark:text-white">Objectif Patrimonial</h2><p className="text-gray-500 dark:text-gray-400 text-sm">Progression vers votre cible</p></div><button onClick={() => openModal('goal')} className="p-2 bg-gray-50 dark:bg-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 transition-colors"><Target className="w-5 h-5" /></button></div><div className="relative z-10"><div className="flex justify-between items-end mb-2"><span className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></span><span className="text-sm font-semibold text-gray-500 dark:text-gray-400"><BlurMoney amount={patrimonyGoal} privacyMode={privacyMode} /></span></div><div className="w-full bg-gray-100 dark:bg-slate-700 rounded-full h-4 overflow-hidden border border-gray-200 dark:border-slate-600"><div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-1000 ease-out" style={{width: `${progress}%`}}></div></div><div className="text-right text-xs font-bold text-blue-600 dark:text-blue-400 mt-1">{progress.toFixed(1)}% atteint</div></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-6"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Patrimoine Total</div><div className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Capital Investi</div><div className="text-3xl font-bold text-gray-700 dark:text-gray-200"><BlurMoney amount={totalInvestedGlobal} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Plus/Moins Value</div><div className={`text-3xl font-bold ${totalNetGainLoss >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>{totalNetGainLoss >= 0 ? '+' : ''}<BlurMoney amount={totalNetGainLoss} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Performance Globale</div><div className="text-3xl font-bold"><PerformanceBadge current={totalPatrimony} invested={totalInvestedGlobal} tri={globalTRI} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3><div className="h-72">{evolution.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><AreaChart data={evolution}><defs><linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.1}/><stop offset="95%" stopColor="#10B981" stopOpacity={0}/></linearGradient><linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64748B" stopOpacity={0.1}/><stop offset="95%" stopColor="#64748B" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : (v/1000).toFixed(0)+'k'} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} /><Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" /><Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" /></AreaChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Ajoutez des valorisations pour voir le graphique</div>}</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col"><div className="flex justify-between items-center mb-6"><h3 className="font-bold flex items-center gap-2 text-lg text-gray-800 dark:text-white"><PieChartIcon className="w-5 h-5 text-blue-500" /> Répartition & Cibles</h3><button onClick={() => openModal('allocation')} className="text-xs bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors"><Target className="w-3 h-3" /> Définir Cible</button></div><div className="space-y-5 overflow-y-auto pr-2 flex-1">{globalCategoryDistribution.length > 0 ? globalCategoryDistribution.map((d, i) => { const targetPct = targetAllocation[d.type] || 0; const idealAmount = totalPatrimony * (targetPct / 100); const delta = idealAmount - d.value; const needsAction = Math.abs(delta) > 100; return (<div key={i} className="group"><div className="flex justify-between text-sm mb-1.5"><span className="font-medium text-gray-700 dark:text-gray-300 flex items-center"><div className="w-2 h-2 rounded-full mr-2" style={{backgroundColor: d.color}}></div>{d.label}</span><div className="text-right"><span className="font-bold text-gray-900 dark:text-white block"><BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span></span></div></div><div className="relative w-full h-2.5 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden"><div className="absolute top-0 left-0 h-full transition-all duration-500" style={{width: `${d.percentage}%`, backgroundColor: d.color, opacity: 0.8}}></div>{targetPct > 0 && <div className="absolute top-0 w-1 h-full bg-black/50 dark:bg-white/50 z-10" style={{left: `${targetPct}%`}}></div>}</div>{targetPct > 0 && (<div className="flex justify-between items-center mt-1 text-xs"><span className="text-gray-400">Cible : {targetPct}%</span>{needsAction && (<span className={`font-bold ${delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-500 dark:text-red-400'} flex items-center gap-1`}>{delta > 0 ? 'Acheter' : 'Vendre'} <BlurMoney amount={Math.abs(delta)} privacyMode={privacyMode} /></span>)}</div>)}</div>); }) : <div className="h-full flex items-center justify-center text-gray-400 py-20">Aucune donnée</div>}</div></div></div></div>);
   };
   
   const FAQView = () => (
     <div className="space-y-6 w-full animate-fade-in max-w-4xl mx-auto">
       <div className="flex items-center gap-3 mb-6"><div className="bg-blue-600 p-2 rounded-lg text-white"><HelpCircle className="w-6 h-6" /></div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">Aide & Guide d'utilisation</h2></div>
       <div className="grid gap-6">
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><GitCompare className="w-5 h-5 text-purple-500" /> Comparateur de Scénarios (Nouveau v1.19)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Comparez vos projections selon deux hypothèses :</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li><strong>Scénario Historique :</strong> Utilise votre TRI Global réel (calculé depuis votre tout premier versement). C'est votre "vitesse de croisière" réelle.</li><li><strong>Scénario Cible :</strong> Utilise le taux théorique que vous définissez (ex: 5%).</li></ul></div>
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><Flag className="w-5 h-5 text-red-500" /> Objectif Patrimonial (Nouveau v1.20)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Visualisez la ligne d'arrivée.</p><ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300 text-sm"><li>Dans la simulation, une ligne rouge horizontale représente votre objectif.</li><li>Le système calcule automatiquement quand vos courbes croiseront cette ligne.</li></ul></div>
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><Eye className="w-5 h-5 text-gray-500" /> Mode Discret (Nouveau v1.21)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Un bouton en forme d'œil en haut de l'écran permet de flouter tous les montants en euros, tout en laissant visibles les pourcentages.</p></div>
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-md"><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white mb-3"><TrendingUp className="w-5 h-5 text-green-500" /> Courbe Investissement (Nouveau v1.21)</h3><p className="text-gray-600 dark:text-gray-300 mb-2">Sur la page de détail d'un compte, le graphique affiche maintenant une ligne pointillée verte représentant vos versements nets cumulés. Si la courbe bleue est au-dessus, vous êtes en plus-value.</p></div>
       </div>
     </div>
   );
@@ -730,6 +684,7 @@ const InvestmentTrackerApp = () => {
           </nav>
           <div className="flex gap-2 items-center">
             {saving && <Save className="w-5 h-5 text-gray-400 animate-pulse" />}
+            <button onClick={() => setPrivacyMode(!privacyMode)} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={privacyMode ? "Afficher montants" : "Masquer montants"}>{privacyMode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button>
             <button onClick={() => openModal('transfer')} className="p-2 text-indigo-500 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" title="Transfert"><ArrowRightLeft className="w-5 h-5" /></button>
             <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-gray-500 dark:text-yellow-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">{darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
             <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 mx-2"></div>
@@ -740,7 +695,7 @@ const InvestmentTrackerApp = () => {
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} />}{view === 'faq' && <FAQView />}</>}</main>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}{view === 'faq' && <FAQView />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
@@ -748,7 +703,7 @@ const InvestmentTrackerApp = () => {
       <Modal isOpen={modals.snapshot} onClose={closeModal} title={editData ? "Modifier valorisation" : "Nouvelle valorisation"}><SnapshotForm brokerId={selectedBroker?.id} accountId={selectedAccount?.id} onSubmit={handleSaveSnapshot} onCancel={closeModal} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
       <Modal isOpen={modals.movement} onClose={() => {closeModal(); openModal('movementList')}} title={editData ? "Modifier mouvement" : "Nouveau mouvement"}><MovementForm onSubmit={handleSaveMovement} onCancel={() => {closeModal(); openModal('movementList')}} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
       <Modal isOpen={modals.transfer} onClose={closeModal} title="Effectuer un transfert"><TransferForm brokers={brokers} onSubmit={handleSaveTransfer} onCancel={closeModal} /></Modal>
-      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white">{getAccountInvestedTotalRaw(selectedAccount || {}).toLocaleString('fr-FR')} {selectedAccount?.currency}</span></div><button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button><div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}{parseFloat(m.amount).toLocaleString('fr-FR')}</span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
+      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div><button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button><div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
       <Modal isOpen={modals.allocation} onClose={closeModal} title="Définir l'allocation cible"><TargetAllocationForm currentTargets={targetAllocation} onSubmit={(t) => { const newAlloc = t; saveUserData(undefined, undefined, newAlloc); closeModal(); showToast('Cibles mises à jour'); }} onCancel={closeModal} /></Modal>
       <Modal isOpen={modals.goal} onClose={closeModal} title="Objectif Patrimonial"><div className="space-y-4"><label className={labelClass}>Montant cible (€)</label><input type="number" defaultValue={patrimonyGoal} id="goalInput" className={`${inputClass} text-lg font-bold`} /><div className="flex justify-end gap-2 pt-4"><button onClick={closeModal} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const val = parseFloat(document.getElementById('goalInput').value); if(val > 0) { saveUserData(undefined, val, undefined); closeModal(); showToast('Objectif mis à jour'); } }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button></div></div></Modal>
       <Toast message={notification.message} type={notification.type} onClose={() => setNotification({ ...notification, message: '' })} />
