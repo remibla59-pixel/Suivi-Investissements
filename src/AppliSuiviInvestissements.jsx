@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PlusCircle, Trash2, Edit2, Building2, Wallet, TrendingUp, PieChart as PieChartIcon, BarChart3, ChevronRight, ArrowLeft, X, AlertCircle, DollarSign, Home, Gem, TrendingDown, Download, Upload, Coins, Target, ArrowDownCircle, ArrowUpCircle, History, LogOut, Loader2, Save, Moon, Sun, CheckCircle, ArrowRightLeft, Percent, HelpCircle, Activity, RotateCcw, Calculator, Calendar, GitCompare, Flag, Eye, EyeOff } from 'lucide-react';
-import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
+import { LineChart, Line, AreaChart, Area, BarChart, ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -352,7 +352,68 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
             </div>
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
-                <div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={stats}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" /><YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : v} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} cursor={{fill: 'transparent'}} /><ReferenceLine y={0} stroke="#9CA3AF" /><Bar dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" isAnimationActive={false}>{stats.map((entry, index) => (<cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}</Bar></BarChart></ResponsiveContainer></div>
+                <div className="h-80"> {/* J'ai augmenté un peu la hauteur à h-80 pour la lisibilité */}
+    <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={stats}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+            
+            {/* Axe X : Dates */}
+            <XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" />
+            
+            {/* Axe Y Gauche : Montants (€) */}
+            <YAxis 
+                yAxisId="left"
+                fontSize={12} 
+                stroke="#9CA3AF" 
+                tickFormatter={v => privacyMode ? '***' : `${(v).toFixed(0)}€`} 
+            />
+            
+            {/* Axe Y Droit : Pourcentages (%) */}
+            <YAxis 
+                yAxisId="right"
+                orientation="right"
+                fontSize={12} 
+                stroke="#F59E0B" // Couleur orange
+                tickFormatter={v => `${v.toFixed(1)}%`}
+            />
+
+            <Tooltip 
+                contentStyle={{
+                    borderRadius: '8px', 
+                    border: 'none', 
+                    backgroundColor: darkMode ? '#1e293b' : '#fff', 
+                    color: darkMode ? '#fff' : '#000',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                }}
+                formatter={(value, name) => {
+                    if (name === "Rendement") return [`${value.toFixed(2)} %`, name];
+                    return [privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value), name];
+                }}
+            />
+            
+            <Legend />
+            <ReferenceLine y={0} yAxisId="left" stroke="#9CA3AF" />
+
+            {/* Barres : Performance (Axe Gauche) */}
+            <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" barSize={40}>
+                {stats.map((entry, index) => (
+                    <cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />
+                ))}
+            </Bar>
+
+            {/* Ligne : Rendement (Axe Droit) */}
+            <Line 
+                yAxisId="right"
+                type="monotone" 
+                dataKey="yield" 
+                name="Rendement" 
+                stroke="#F59E0B" 
+                strokeWidth={3}
+                dot={{r: 4, fill: '#F59E0B'}}
+            />
+        </ComposedChart>
+    </ResponsiveContainer>
+</div>
             </div>
             <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg overflow-hidden">
                 <div className="overflow-x-auto">
@@ -708,7 +769,7 @@ const InvestmentTrackerApp = () => {
   return (
     <div className={`min-h-screen font-sans pb-20 w-full transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-gray-900'}`}>
       <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-30 shadow-md w-full">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-xl cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setView('dashboard')}>
             <div className="bg-blue-600 text-white p-1.5 rounded-lg"><Wallet className="w-6 h-6" /></div>
             <span className="hidden sm:inline">Suivi Investissements</span>
@@ -729,7 +790,7 @@ const InvestmentTrackerApp = () => {
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}{view === 'faq' && <FAQView />}</>}</main>
+      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}{view === 'faq' && <FAQView />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
