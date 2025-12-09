@@ -92,15 +92,14 @@ const calculateXIRR = (movements, currentValue) => {
     return null;
 };
 
-// CORRECTIF : Calcul du capital net investi à une date précise
+// Calcul du capital net investi à une date précise
 const getNetInvestedUntilDate = (movements, dateStr) => {
     const targetDate = new Date(dateStr).getTime();
     return movements.reduce((acc, m) => {
         const mDate = new Date(m.date).getTime();
         if (mDate <= targetDate) {
             if (m.type === 'deposit') return acc + parseFloat(m.amount);
-            // Si retrait : on ne soustrait QUE la part de capital (pas la plus-value sortie)
-            // Si capitalPart n'est pas défini (vieux mouvements), on fallback sur le montant total
+            // Si retrait : on ne soustrait QUE la part de capital
             if (m.type === 'withdrawal') {
                 const capitalToRemove = m.capitalPart !== undefined && m.capitalPart !== null 
                     ? parseFloat(m.capitalPart) 
@@ -112,9 +111,8 @@ const getNetInvestedUntilDate = (movements, dateStr) => {
     }, 0);
 };
 
-// --- HELPER AGREGATION MENSUELLE (CORRIGÉ FUSEAU HORAIRE) ---
+// --- HELPER AGREGATION MENSUELLE ---
 const processMonthlyStats = (brokers) => {
-    // 1. Trouver la plage de dates globale
     let minDateMs = Date.now();
     let hasData = false;
 
@@ -134,7 +132,7 @@ const processMonthlyStats = (brokers) => {
     if (!hasData) return [];
 
     const startDate = new Date(minDateMs);
-    startDate.setDate(1); // Forcer le 1er du mois
+    startDate.setDate(1); 
     startDate.setHours(0, 0, 0, 0);
     
     const endDate = new Date();
@@ -143,16 +141,13 @@ const processMonthlyStats = (brokers) => {
     const stats = [];
     let currentDate = new Date(startDate);
 
-    // 2. Boucle mois par mois
     while (currentDate <= endDate) {
-        // Génération sécurisée des dates locales (YYYY-MM)
         const year = currentDate.getFullYear();
         const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const monthStr = `${year}-${month}`; // ex: "2023-12"
+        const monthStr = `${year}-${month}`; 
         
-        // Calcul du dernier jour du mois en Local (pour éviter le bug UTC -1 jour)
         const lastDay = new Date(year, currentDate.getMonth() + 1, 0).getDate();
-        const endOfMonthStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`; // ex: "2023-12-31"
+        const endOfMonthStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`; 
 
         let totalValue = 0;
         let totalFlows = 0;     
@@ -162,8 +157,6 @@ const processMonthlyStats = (brokers) => {
             broker.accounts.forEach(account => {
                 const rate = parseFloat(account.exchangeRate || 1);
 
-                // A. VALEUR : Carry Forward
-                // On cherche le dernier snapshot disponible jusqu'à la fin de ce mois INCLUSE
                 const relevantSnapshots = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
                 const lastSnap = relevantSnapshots.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
                 
@@ -171,7 +164,6 @@ const processMonthlyStats = (brokers) => {
                     totalValue += parseFloat(lastSnap.amount) * rate;
                 }
 
-                // B. FLUX : Uniquement ceux dont la date commence par "YYYY-MM"
                 const monthMoves = (account.movements || []).filter(m => m.date.startsWith(monthStr));
                 monthMoves.forEach(m => {
                     const amount = parseFloat(m.amount) * rate;
@@ -179,7 +171,6 @@ const processMonthlyStats = (brokers) => {
                     else if (m.type === 'withdrawal') totalFlows -= amount;
                 });
 
-                // C. INVESTI
                 totalInvested += getNetInvestedUntilDate(account.movements || [], endOfMonthStr) * rate;
             });
         });
@@ -192,23 +183,18 @@ const processMonthlyStats = (brokers) => {
             invested: totalInvested 
         });
 
-        // Mois suivant
         currentDate.setMonth(currentDate.getMonth() + 1);
     }
 
-    // 3. Calcul des variations et performances (Dietz Modifié)
     return stats.map((stat, i) => {
-        // Pour le tout premier mois, si on part de 0 mais qu'il y a un flux, on initialise
         if (i === 0) {
             const performance = stat.value - stat.flow; 
-            // Si flow et value sont proches (ex: dépôt 1000, valeur 950), perf = -50.
-            // Yield = -50 / (1000 * 0.5) approx.
             let denominator = stat.flow * 0.5;
-            if (denominator === 0) denominator = stat.value; // Fallback
+            if (denominator === 0) denominator = stat.value;
             
             return { 
                 ...stat, 
-                variation: stat.value, // On part de 0
+                variation: stat.value, 
                 performance: performance, 
                 yield: (denominator > 0) ? (performance / denominator) * 100 : 0 
             };
@@ -218,13 +204,10 @@ const processMonthlyStats = (brokers) => {
         const variation = stat.value - prev.value;
         const performance = variation - stat.flow;
         
-        // Dénominateur Dietz : Valeur Début + (Flux * 0.5)
-        // Gestion du cas "Nouveau Compte" : si prev.value est quasi nul, on se base sur le flux
         let denominator = prev.value + (stat.flow * 0.5);
         
-        // Sécurité anti-explosion du pourcentage
-        if (Math.abs(denominator) < 1) denominator = stat.flow * 0.5; // Si on part de 0 avec un gros dépôt
-        if (denominator === 0) denominator = 1; // Éviter division par 0
+        if (Math.abs(denominator) < 1) denominator = stat.flow * 0.5;
+        if (denominator === 0) denominator = 1;
 
         const yieldPct = (performance / denominator) * 100;
 
@@ -235,7 +218,6 @@ const processMonthlyStats = (brokers) => {
 
 // --- COMPOSANTS UI ---
 
-// Composant pour flouter les montants
 const BlurMoney = ({ amount, currency = '€', privacyMode, className = "" }) => {
     if (privacyMode) {
         return <span className={`bg-gray-200 dark:bg-slate-700 text-transparent rounded px-1 select-none ${className}`}>00000</span>;
@@ -352,65 +334,26 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
             </div>
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
-                <div className="h-80"> {/* J'ai augmenté un peu la hauteur à h-80 pour la lisibilité */}
+                <div className="h-80">
     <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={stats}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-            
-            {/* Axe X : Dates */}
             <XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" />
-            
-            {/* Axe Y Gauche : Montants (€) */}
-            <YAxis 
-                yAxisId="left"
-                fontSize={12} 
-                stroke="#9CA3AF" 
-                tickFormatter={v => privacyMode ? '***' : `${(v).toFixed(0)}€`} 
-            />
-            
-            {/* Axe Y Droit : Pourcentages (%) */}
-            <YAxis 
-                yAxisId="right"
-                orientation="right"
-                fontSize={12} 
-                stroke="#F59E0B" // Couleur orange
-                tickFormatter={v => `${v.toFixed(1)}%`}
-            />
-
+            <YAxis yAxisId="left" fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : `${(v).toFixed(0)}€`} />
+            <YAxis yAxisId="right" orientation="right" fontSize={12} stroke="#F59E0B" tickFormatter={v => `${v.toFixed(1)}%`} />
             <Tooltip 
-                contentStyle={{
-                    borderRadius: '8px', 
-                    border: 'none', 
-                    backgroundColor: darkMode ? '#1e293b' : '#fff', 
-                    color: darkMode ? '#fff' : '#000',
-                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                }}
+                contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 formatter={(value, name) => {
                     if (name === "Rendement") return [`${value.toFixed(2)} %`, name];
                     return [privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value), name];
                 }}
             />
-            
             <Legend />
             <ReferenceLine y={0} yAxisId="left" stroke="#9CA3AF" />
-
-            {/* Barres : Performance (Axe Gauche) */}
             <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" barSize={40}>
-                {stats.map((entry, index) => (
-                    <cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />
-                ))}
+                {stats.map((entry, index) => (<cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}
             </Bar>
-
-            {/* Ligne : Rendement (Axe Droit) */}
-            <Line 
-                yAxisId="right"
-                type="monotone" 
-                dataKey="yield" 
-                name="Rendement" 
-                stroke="#F59E0B" 
-                strokeWidth={3}
-                dot={{r: 4, fill: '#F59E0B'}}
-            />
+            <Line yAxisId="right" type="monotone" dataKey="yield" name="Rendement" stroke="#F59E0B" strokeWidth={3} dot={{r: 4, fill: '#F59E0B'}} />
         </ComposedChart>
     </ResponsiveContainer>
 </div>
@@ -464,7 +407,6 @@ const InvestmentTrackerApp = () => {
   const fileInputRef = useRef(null);
   const [sortConfig, setSortConfig] = useState({ key: 'value', direction: 'desc' });
 
-  // THEME EFFECT
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
@@ -475,7 +417,6 @@ const InvestmentTrackerApp = () => {
     }
   }, [darkMode]);
 
-  // AUTH
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         setUser(currentUser);
@@ -541,7 +482,143 @@ const InvestmentTrackerApp = () => {
     }
   };
 
-  // HELPERS
+  // --- HELPERS CSV & EXPORT/IMPORT ---
+
+  // Helper : Parser le CSV pour reconstruire la structure des données
+  const parseCSV = (csvText) => {
+    const lines = csvText.split('\n');
+    const brokersMap = new Map();
+
+    lines.slice(1).forEach((line, index) => {
+        if (!line.trim()) return;
+        const cols = line.split(';');
+        if (cols.length < 8) return;
+
+        const [date, brokerName, accountName, accType, nature, category, amountStr, currency] = cols;
+        const amount = parseFloat(amountStr);
+
+        // 1. Courtier
+        if (!brokersMap.has(brokerName)) {
+            brokersMap.set(brokerName, { 
+                id: Date.now() + index, 
+                name: brokerName, 
+                accounts: [] 
+            });
+        }
+        const broker = brokersMap.get(brokerName);
+
+        // 2. Compte
+        let account = broker.accounts.find(a => a.name === accountName);
+        if (!account) {
+            account = { 
+                id: Date.now() + index + 10000, 
+                name: accountName, 
+                type: accType,
+                currency: currency || 'EUR', 
+                movements: [], 
+                snapshots: [] 
+            };
+            broker.accounts.push(account);
+        }
+
+        // 3. Donnée
+        if (nature.startsWith('Mouvement')) {
+            const typeMatch = nature.match(/\((.*?)\)/);
+            const moveType = typeMatch ? typeMatch[1] : 'deposit';
+            
+            account.movements.push({
+                id: Date.now() + index + 20000,
+                date: date,
+                amount: amount,
+                type: moveType
+            });
+        } else if (nature === 'Valorisation') {
+            let snap = account.snapshots.find(s => s.date === date);
+            if (!snap) {
+                snap = { 
+                    id: Date.now() + index + 30000, 
+                    date: date, 
+                    amount: 0, 
+                    categories: [] 
+                };
+                account.snapshots.push(snap);
+            }
+            snap.categories.push({ type: category, amount: amount });
+            // Mise à jour du total
+            snap.amount = (parseFloat(snap.amount) + amount).toFixed(2);
+        }
+    });
+
+    return Array.from(brokersMap.values());
+  };
+
+  const handleExportCSV = () => {
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Date;Courtier;Compte;TypeCompte;Nature;Categorie;Montant;Devise\n";
+
+    brokers.forEach(broker => {
+        broker.accounts.forEach(account => {
+            const currency = account.currency || 'EUR';
+            const accType = account.type || 'Autre';
+            
+            if(account.snapshots) {
+                account.snapshots.forEach(snap => {
+                    snap.categories.forEach(cat => {
+                        csvContent += `${snap.date};${broker.name};${account.name};${accType};Valorisation;${cat.type};${cat.amount};${currency}\n`;
+                    });
+                });
+            }
+            
+            if(account.movements) {
+                account.movements.forEach(move => {
+                    csvContent += `${move.date};${broker.name};${account.name};${accType};Mouvement (${move.type});-;${move.amount};${currency}\n`;
+                });
+            }
+        });
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `mon_patrimoine_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { 
+        try { 
+            const content = ev.target.result;
+            if (file.name.endsWith('.csv')) {
+                // IMPORT CSV
+                if(window.confirm('⚠️ Import CSV détecté.\nCela va REMPLACER toutes vos données par le contenu du fichier CSV.\nVoulez-vous continuer ?')) {
+                    const newBrokers = parseCSV(content);
+                    // On garde l'objectif et l'alloc actuels car non présents dans le CSV
+                    saveUserData(newBrokers, patrimonyGoal, targetAllocation); 
+                    showToast('Import CSV réussi'); 
+                }
+            } else {
+                // IMPORT JSON
+                const json = JSON.parse(content); 
+                if(window.confirm('Remplacer les données Firebase par ce fichier de sauvegarde JSON ?')) { 
+                    saveUserData(json.brokers || [], json.patrimonyGoal || 100000, json.targetAllocation || {}); 
+                    showToast('Import JSON réussi'); 
+                } 
+            }
+        } catch (err) { 
+            console.error(err);
+            showToast('Fichier invalide', 'error'); 
+        } 
+        if(fileInputRef.current) fileInputRef.current.value = ''; 
+    };
+    reader.readAsText(file);
+  };
+
+  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.21" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
+
   const showToast = (message, type = 'success') => setNotification({ message, type });
   const getLatestSnapshot = (acc) => acc.snapshots?.length ? acc.snapshots[acc.snapshots.length - 1] : null;
   const getAccountCurrentValueRaw = (acc) => { const last = getLatestSnapshot(acc); return last ? parseFloat(last.amount) : 0; };
@@ -623,7 +700,6 @@ const InvestmentTrackerApp = () => {
     }).sort((a, b) => b.value - a.value);
   }, [brokers]);
 
-  // ACTIONS FORMULAIRES
   const openModal = (type, data = null) => { 
       setEditData(data);
       setModals({ broker: false, account: false, snapshot: false, goal: false, movement: false, movementList: false, allocation: false, transfer: false, [type]: true }); 
@@ -691,18 +767,10 @@ const InvestmentTrackerApp = () => {
     });
     saveUserData(updated, undefined, undefined); showToast('Transfert effectué'); closeModal();
   };
-  const handleImport = (e) => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => { try { const json = JSON.parse(ev.target.result); if(window.confirm('Remplacer les données Firebase par ce fichier ?')) { saveUserData(json.brokers || [], json.patrimonyGoal || 100000, json.targetAllocation || {}); showToast('Import réussi vers le Cloud'); } } catch { showToast('Fichier invalide', 'error'); } if(fileInputRef.current) fileInputRef.current.value = ''; };
-    reader.readAsText(file);
-  };
-  const handleExport = () => { const blob = new Blob([JSON.stringify({ brokers, patrimonyGoal, targetAllocation, version: "1.21" }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `backup_cloud_${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
   if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
 
-  // --- VUES ---
   const BrokersView = () => (
     <div className="space-y-6 w-full animate-fade-in">
         <div className="flex justify-between items-center"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">Mes Courtiers</h2><button onClick={() => openModal('broker')} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 shadow-lg font-medium transition-transform active:scale-95"><PlusCircle className="w-5 h-5" /> Ajouter</button></div>
@@ -726,7 +794,6 @@ const InvestmentTrackerApp = () => {
     const investedVal = getAccountInvestedTotalRaw(selectedAccount); 
     const lastSnap = getLatestSnapshot(selectedAccount); 
     
-    // CHART DATA: Ajouter 'invested' pour chaque point
     const chartData = snapshots.map(s => ({ 
         date: new Date(s.date).toLocaleDateString('fr-FR', {month:'short', year:'2-digit'}), 
         val: parseFloat(s.amount),
@@ -765,24 +832,29 @@ const InvestmentTrackerApp = () => {
             <span className="hidden sm:inline">Suivi Investissements</span>
           </div>
           <nav className="flex items-center gap-1 bg-gray-100 dark:bg-slate-700 p-1 rounded-xl overflow-x-auto">
-  {['dashboard', 'brokers', 'simulation', 'history'].map(k => (
-    <button 
-      key={k} 
-      onClick={() => { setView(k); setSelectedBroker(null); setSelectedAccount(null); }} 
-      className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${view === k ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
-    >
-      {k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'simulation' ? 'Simul' : 'Historique'}
-    </button>
-  ))}
-</nav>
+            {['dashboard', 'brokers', 'simulation', 'history'].map(k => (
+                <button 
+                key={k} 
+                onClick={() => { setView(k); setSelectedBroker(null); setSelectedAccount(null); }} 
+                className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${view === k ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
+                >
+                {k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'simulation' ? 'Simul' : 'Historique'}
+                </button>
+            ))}
+            </nav>
           <div className="flex gap-2 items-center">
             {saving && <Save className="w-5 h-5 text-gray-400 animate-pulse" />}
             <button onClick={() => setPrivacyMode(!privacyMode)} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={privacyMode ? "Afficher montants" : "Masquer montants"}>{privacyMode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button>
             <button onClick={() => openModal('transfer')} className="p-2 text-indigo-500 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" title="Transfert"><ArrowRightLeft className="w-5 h-5" /></button>
             <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-gray-500 dark:text-yellow-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">{darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
             <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 mx-2"></div>
-            <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".json" /><button onClick={() => fileInputRef.current.click()} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Importer"><Upload className="w-5 h-5" /></button>
-            <button onClick={handleExport} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Exporter"><Download className="w-5 h-5" /></button>
+            
+            {/* BOUTONS IMPORT / EXPORT */}
+            <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".json,.csv" />
+            <button onClick={() => fileInputRef.current.click()} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Importer (JSON ou CSV)"><Upload className="w-5 h-5" /></button>
+            <button onClick={handleExport} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Exporter Cloud (JSON)"><Download className="w-5 h-5" /></button>
+            <button onClick={handleExportCSV} className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg ml-1" title="Export Excel (CSV)"><div className="font-bold text-xs border border-current rounded px-1">CSV</div></button>
+            
             <button onClick={handleResetData} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg ml-2" title="Réinitialiser"><RotateCcw className="w-5 h-5" /></button>
             <button onClick={handleLogout} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Déconnexion"><LogOut className="w-5 h-5" /></button>
           </div>
