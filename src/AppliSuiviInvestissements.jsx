@@ -112,20 +112,18 @@ const getNetInvestedUntilDate = (movements, dateStr) => {
     }, 0);
 };
 
-// --- HELPER AGREGATION MENSUELLE (VERSION ROBUSTE / DIETZ MODIFIÉ) ---
+// --- HELPER AGREGATION MENSUELLE (CORRIGÉ FUSEAU HORAIRE) ---
 const processMonthlyStats = (brokers) => {
-    // 1. Trouver la plage de dates globale (du tout premier mouvement/snapshot à aujourd'hui)
+    // 1. Trouver la plage de dates globale
     let minDateMs = Date.now();
     let hasData = false;
 
     brokers.forEach(b => b.accounts.forEach(a => {
-        // Vérifier les snapshots
         if (a.snapshots?.length) {
             hasData = true;
             const dates = a.snapshots.map(s => new Date(s.date).getTime());
             minDateMs = Math.min(minDateMs, ...dates);
         }
-        // Vérifier les mouvements (parfois antérieurs aux snapshots)
         if (a.movements?.length) {
             hasData = true;
             const dates = a.movements.map(m => new Date(m.date).getTime());
@@ -136,32 +134,36 @@ const processMonthlyStats = (brokers) => {
     if (!hasData) return [];
 
     const startDate = new Date(minDateMs);
-    startDate.setDate(1); // Début du premier mois
+    startDate.setDate(1); // Forcer le 1er du mois
+    startDate.setHours(0, 0, 0, 0);
     
-    const endDate = new Date(); // Jusqu'à aujourd'hui
+    const endDate = new Date();
     endDate.setDate(1); 
     
     const stats = [];
     let currentDate = new Date(startDate);
 
-    // 2. Boucle mois par mois (Timeline continue)
+    // 2. Boucle mois par mois
     while (currentDate <= endDate) {
-        const monthStr = currentDate.toISOString().substring(0, 7); // "2023-01"
-        // Le dernier jour de ce mois (pour savoir quel snapshot prendre)
-        const endOfMonthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-        const endOfMonthStr = endOfMonthDate.toISOString().split('T')[0];
+        // Génération sécurisée des dates locales (YYYY-MM)
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const monthStr = `${year}-${month}`; // ex: "2023-12"
         
+        // Calcul du dernier jour du mois en Local (pour éviter le bug UTC -1 jour)
+        const lastDay = new Date(year, currentDate.getMonth() + 1, 0).getDate();
+        const endOfMonthStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`; // ex: "2023-12-31"
+
         let totalValue = 0;
-        let totalFlows = 0;     // Flux NETS du mois (Dépôts - Retraits)
-        let totalInvested = 0;  // Capital investi cumulé historique
+        let totalFlows = 0;     
+        let totalInvested = 0;
 
         brokers.forEach(broker => {
             broker.accounts.forEach(account => {
                 const rate = parseFloat(account.exchangeRate || 1);
 
-                // A. VALEUR : "Carry Forward"
-                // On cherche le dernier snapshot disponible à la fin de ce mois.
-                // S'il n'y en a pas ce mois-ci, on prend le plus récent des mois précédents.
+                // A. VALEUR : Carry Forward
+                // On cherche le dernier snapshot disponible jusqu'à la fin de ce mois INCLUSE
                 const relevantSnapshots = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
                 const lastSnap = relevantSnapshots.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
                 
@@ -169,19 +171,15 @@ const processMonthlyStats = (brokers) => {
                     totalValue += parseFloat(lastSnap.amount) * rate;
                 }
 
-                // B. FLUX : Uniquement ceux de CE mois précis
+                // B. FLUX : Uniquement ceux dont la date commence par "YYYY-MM"
                 const monthMoves = (account.movements || []).filter(m => m.date.startsWith(monthStr));
                 monthMoves.forEach(m => {
                     const amount = parseFloat(m.amount) * rate;
-                    // On ne compte PAS les dividendes/intérêts comme des flux externes (c'est de la performance interne)
                     if (m.type === 'deposit') totalFlows += amount;
-                    else if (m.type === 'withdrawal') {
-                        // Pour le flux de trésorerie net, on compte tout le montant sorti
-                        totalFlows -= amount;
-                    }
+                    else if (m.type === 'withdrawal') totalFlows -= amount;
                 });
 
-                // C. INVESTI : Cumul historique
+                // C. INVESTI
                 totalInvested += getNetInvestedUntilDate(account.movements || [], endOfMonthStr) * rate;
             });
         });
@@ -194,31 +192,41 @@ const processMonthlyStats = (brokers) => {
             invested: totalInvested 
         });
 
-        // Passer au mois suivant
+        // Mois suivant
         currentDate.setMonth(currentDate.getMonth() + 1);
     }
 
-    // 3. Calcul des variations et performances (Méthode Dietz Simplifiée)
+    // 3. Calcul des variations et performances (Dietz Modifié)
     return stats.map((stat, i) => {
-        if (i === 0) return { ...stat, variation: 0, performance: 0, yield: 0 };
+        // Pour le tout premier mois, si on part de 0 mais qu'il y a un flux, on initialise
+        if (i === 0) {
+            const performance = stat.value - stat.flow; 
+            // Si flow et value sont proches (ex: dépôt 1000, valeur 950), perf = -50.
+            // Yield = -50 / (1000 * 0.5) approx.
+            let denominator = stat.flow * 0.5;
+            if (denominator === 0) denominator = stat.value; // Fallback
+            
+            return { 
+                ...stat, 
+                variation: stat.value, // On part de 0
+                performance: performance, 
+                yield: (denominator > 0) ? (performance / denominator) * 100 : 0 
+            };
+        }
         
         const prev = stats[i - 1];
-        
-        // Variation brute du patrimoine
         const variation = stat.value - prev.value;
-        
-        // Performance Nette (€) = Variation - Apports nets
         const performance = variation - stat.flow;
         
-        // Rendement (%) : Méthode Dietz
-        // On considère que les flux arrivent en moyenne au milieu du mois (poids 0.5)
-        // Base de calcul = Valeur Début + (Flux * 0.5)
+        // Dénominateur Dietz : Valeur Début + (Flux * 0.5)
+        // Gestion du cas "Nouveau Compte" : si prev.value est quasi nul, on se base sur le flux
         let denominator = prev.value + (stat.flow * 0.5);
         
-        // Sécurité pour éviter division par zéro
-        if (denominator <= 0) denominator = prev.value; 
+        // Sécurité anti-explosion du pourcentage
+        if (Math.abs(denominator) < 1) denominator = stat.flow * 0.5; // Si on part de 0 avec un gros dépôt
+        if (denominator === 0) denominator = 1; // Éviter division par 0
 
-        const yieldPct = denominator > 0 ? (performance / denominator) * 100 : 0;
+        const yieldPct = (performance / denominator) * 100;
 
         return { ...stat, variation, performance, yield: yieldPct };
     });
