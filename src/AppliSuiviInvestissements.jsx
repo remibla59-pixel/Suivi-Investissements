@@ -695,6 +695,7 @@ const InvestmentTrackerApp = () => {
       });
     });
     const total = Object.values(dist).reduce((a, b) => a + b, 0);
+    const absTotal = Object.values(dist).reduce((a, b) => a + Math.abs(b), 0);
     return Object.entries(dist).map(([k, v]) => {
       const i = INVESTMENT_CATEGORIES.find(c => c.value === k);
       return { label: i?.label || k, value: v, color: i?.color || '#999', percentage: absTotal ? (Math.abs(v)/absTotal*100).toFixed(1) : 0, type: k };
