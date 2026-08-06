@@ -93,13 +93,139 @@ const calculateXIRR = (movements, currentValue) => {
     return null;
 };
 
+// Calcul du TWR (Time-Weighted Return)
+const calculateTWR = (movements, snapshots, currentValue) => {
+    if (!movements || movements.length === 0) return null;
+    
+    // On combine mouvements et snapshots pour avoir les points de valorisation
+    // Un TWR propre nécessite la valeur juste avant chaque flux.
+    const events = [];
+    
+    movements.forEach(m => {
+        events.push({
+            date: new Date(m.date).getTime(),
+            type: 'flow',
+            amount: m.type === 'withdrawal' ? -parseFloat(m.amount) : parseFloat(m.amount),
+            preValuation: m.preValuation ? parseFloat(m.preValuation) : null
+        });
+    });
+    
+    snapshots.forEach(s => {
+        events.push({
+            date: new Date(s.date).getTime(),
+            type: 'valuation',
+            value: parseFloat(s.amount)
+        });
+    });
+    
+    // Ajouter la valeur actuelle comme point final
+    events.push({
+        date: new Date().getTime(),
+        type: 'valuation',
+        value: parseFloat(currentValue)
+    });
+    
+    events.sort((a, b) => a.date - b.date);
+    
+    let totalTWR = 1;
+    let lastValue = 0;
+    let hasStarted = false;
+
+    // Le TWR commence au premier flux (dépôt initial)
+    for (let i = 0; i < events.length; i++) {
+        const e = events[i];
+        
+        if (e.type === 'flow') {
+            if (!hasStarted) {
+                // Premier dépôt
+                if (e.amount > 0) {
+                    lastValue = e.amount;
+                    hasStarted = true;
+                }
+                continue;
+            }
+            
+            // On a un flux. On cherche la valeur juste avant ce flux.
+            // Si preValuation est fournie, on l'utilise.
+            // Sinon on utilise la dernière valeur connue (lastValue)
+            const valBefore = e.preValuation !== null ? e.preValuation : lastValue;
+            
+            if (lastValue > 0) {
+                const periodReturn = (valBefore / lastValue);
+                totalTWR *= periodReturn;
+            }
+            
+            // Nouvelle base après le flux
+            lastValue = valBefore + e.amount;
+        } else if (e.type === 'valuation') {
+            if (!hasStarted) continue;
+            
+            const periodReturn = (e.value / lastValue);
+            totalTWR *= periodReturn;
+            lastValue = e.value;
+        }
+    }
+    
+    return (totalTWR - 1) * 100;
+};
+// Calcul du Ratio de Sharpe (rendement ajusté au risque)
+const calculateSharpeRatio = (monthlyReturns, riskFreeRate = 0.03) => {
+    if (!monthlyReturns || monthlyReturns.length < 2) return null;
+    
+    const avgReturn = monthlyReturns.reduce((a, b) => a + b, 0) / monthlyReturns.length;
+    const annualizedReturn = avgReturn * 12; // Annualisation
+    
+    // Calcul de la volatilité (écart-type)
+    const squaredDiffs = monthlyReturns.map(r => Math.pow(r - avgReturn, 2));
+    const variance = squaredDiffs.reduce((a, b) => a + b, 0) / monthlyReturns.length;
+    const volatility = Math.sqrt(variance) * Math.sqrt(12); // Annualisation
+    
+    if (volatility === 0) return null;
+    
+    return (annualizedReturn - riskFreeRate) / volatility;
+};
+
+// Calcul des performances par année glissante
+const calculateRollingYearPerformance = (brokers) => {
+    const stats = processMonthlyStats(brokers);
+    if (stats.length < 12) return [];
+    
+    const rollingPerf = [];
+    
+    for (let i = 11; i < stats.length; i++) {
+        const endMonth = stats[i];
+        const startMonth = stats[i - 11]; // 12 mois avant (i-11 car on inclut le mois de départ)
+        
+        const startValue = startMonth.value;
+        const endValue = endMonth.value;
+        
+        // Calcul des flux sur la période
+        const flowsInPeriod = stats.slice(i - 11, i + 1).reduce((sum, s) => sum + s.flow, 0);
+        
+        // Performance = (Valeur finale - Valeur initiale - Flux) / (Valeur initiale + Flux/2)
+        const avgCapital = startValue + (flowsInPeriod / 2);
+        const performance = avgCapital > 0 ? ((endValue - startValue - flowsInPeriod) / avgCapital) * 100 : 0;
+        
+        rollingPerf.push({
+            endDate: endMonth.month,
+            displayDate: endMonth.displayDate,
+            performance: performance,
+            startValue: startValue,
+            endValue: endValue,
+            flows: flowsInPeriod
+        });
+    }
+    
+    return rollingPerf;
+};
+
 // Calcul du capital net investi à une date précise
 const getNetInvestedUntilDate = (movements, dateStr) => {
     const targetDate = new Date(dateStr).getTime();
-    return movements.reduce((acc, m) => {
+    return (movements || []).reduce((acc, m) => {
         const mDate = new Date(m.date).getTime();
         if (mDate <= targetDate) {
-            if (m.type === 'deposit') return acc + parseFloat(m.amount);
+            if (m.type === 'deposit' || m.type === 'interest') return acc + parseFloat(m.amount);
             // Si retrait : on ne soustrait QUE la part de capital
             if (m.type === 'withdrawal') {
                 const capitalToRemove = m.capitalPart !== undefined && m.capitalPart !== null 
@@ -322,16 +448,173 @@ const SimulationView = ({ currentTotal, globalTRI, patrimonyGoal, privacyMode })
     );
 };
 
-const HistoryView = ({ brokers, darkMode, privacyMode }) => {
-    const stats = useMemo(() => processMonthlyStats(brokers), [brokers]);
+const MovementsGlobalView = ({ brokers, privacyMode }) => {
+    const [startDate, setStartDate] = useState(() => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 12);
+        return d.toISOString().split('T')[0];
+    });
+    const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
 
-    if (!stats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
+    const allMovements = useMemo(() => {
+        const moves = [];
+        brokers.forEach(broker => {
+            broker.accounts.forEach(account => {
+                if (account.movements) {
+                    account.movements.forEach(m => {
+                        moves.push({
+                            ...m,
+                            brokerName: broker.name,
+                            accountName: account.name,
+                            currency: account.currency || 'EUR',
+                            exchangeRate: parseFloat(account.exchangeRate || 1)
+                        });
+                    });
+                }
+            });
+        });
+        return moves.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [brokers]);
+
+    const filteredMovements = useMemo(() => {
+        return allMovements.filter(m => m.date >= startDate && m.date <= endDate);
+    }, [allMovements, startDate, endDate]);
+
+    const stats = useMemo(() => {
+        const s = { deposit: 0, withdrawal: 0, interest: 0, net: 0 };
+        filteredMovements.forEach(m => {
+            const amountEur = parseFloat(m.amount) * m.exchangeRate;
+            if (m.type === 'deposit') s.deposit += amountEur;
+            else if (m.type === 'withdrawal') s.withdrawal += amountEur;
+            else if (m.type === 'interest') s.interest += amountEur;
+        });
+        s.net = s.deposit - s.withdrawal;
+        return s;
+    }, [filteredMovements]);
 
     return (
         <div className="space-y-6 animate-fade-in w-full max-w-5xl mx-auto">
-             <div className="flex items-center gap-3 mb-2">
-                <div className="bg-orange-500 p-2 rounded-lg text-white"><Calendar className="w-6 h-6" /></div>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Rapport Mensuel</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
+                <div className="flex items-center gap-3">
+                    <div className="bg-blue-600 p-2 rounded-lg text-white"><History className="w-6 h-6" /></div>
+                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Récapitulatif des Mouvements</h2>
+                </div>
+                <div className="flex items-center gap-2 bg-white dark:bg-slate-800 p-2 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-gray-400 uppercase">Du</label>
+                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-transparent border-none text-sm font-bold outline-none dark:text-white" />
+                    </div>
+                    <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1"></div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-gray-400 uppercase">Au</label>
+                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-transparent border-none text-sm font-bold outline-none dark:text-white" />
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Total Versé</div>
+                    <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400"><BlurMoney amount={stats.deposit} privacyMode={privacyMode} /></div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Total Retiré</div>
+                    <div className="text-xl font-bold text-red-600 dark:text-red-400"><BlurMoney amount={stats.withdrawal} privacyMode={privacyMode} /></div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Flux Net</div>
+                    <div className={`text-xl font-bold ${stats.net >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'}`}><BlurMoney amount={stats.net} privacyMode={privacyMode} /></div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                    <div className="text-xs font-bold text-gray-400 uppercase mb-1">Dividendes</div>
+                    <div className="text-xl font-bold text-amber-500"><BlurMoney amount={stats.interest} privacyMode={privacyMode} /></div>
+                </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-gray-50 dark:bg-slate-700 text-gray-500 dark:text-gray-300 font-bold uppercase text-[10px] tracking-wider">
+                            <tr>
+                                <th className="p-4 text-center">Type</th>
+                                <th className="p-4">Date</th>
+                                <th className="p-4">Compte</th>
+                                <th className="p-4 text-right">Montant</th>
+                                <th className="p-4 text-right">En EUR</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
+                            {filteredMovements.length > 0 ? filteredMovements.map((m, i) => {
+                                const symbol = CURRENCIES.find(c => c.code === m.currency)?.symbol || '€';
+                                const isDeposit = m.type === 'deposit';
+                                const isInterest = m.type === 'interest';
+                                const amountEur = parseFloat(m.amount) * m.exchangeRate;
+                                
+                                return (
+                                    <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+                                        <td className="p-4 text-center">
+                                            <div className={`inline-flex p-1.5 rounded-full ${isDeposit ? 'bg-green-100 text-green-600 dark:bg-green-900/30' : isInterest ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30' : 'bg-red-100 text-red-600 dark:bg-red-900/30'}`}>
+                                                {isDeposit ? <ArrowUpCircle className="w-4 h-4" /> : isInterest ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}
+                                            </div>
+                                        </td>
+                                        <td className="p-4 font-medium text-gray-600 dark:text-gray-400">{new Date(m.date).toLocaleDateString('fr-FR')}</td>
+                                        <td className="p-4">
+                                            <div className="font-bold text-gray-800 dark:text-white text-xs">{m.brokerName}</div>
+                                            <div className="text-[10px] text-gray-500 dark:text-gray-400">{m.accountName}</div>
+                                        </td>
+                                        <td className={`p-4 text-right font-bold ${isDeposit ? 'text-green-600' : isInterest ? 'text-amber-500' : 'text-red-500'}`}>
+                                            {isDeposit ? '+' : isInterest ? '+' : '-'}<BlurMoney amount={parseFloat(m.amount)} currency={symbol} privacyMode={privacyMode} />
+                                        </td>
+                                        <td className="p-4 text-right font-bold text-gray-900 dark:text-white">
+                                            <BlurMoney amount={amountEur} privacyMode={privacyMode} />
+                                        </td>
+                                    </tr>
+                                );
+                            }) : (
+                                <tr><td colSpan="5" className="p-10 text-center text-gray-400 italic">Aucun mouvement sur cette période</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const HistoryView = ({ brokers, darkMode, privacyMode }) => {
+    const [selectedYear, setSelectedYear] = useState('all');
+    const fullStats = useMemo(() => processMonthlyStats(brokers), [brokers]);
+
+    const years = useMemo(() => {
+        const y = [...new Set(fullStats.map(s => s.month.split('-')[0]))];
+        return y.sort((a, b) => b - a);
+    }, [fullStats]);
+
+    const stats = useMemo(() => {
+        if (selectedYear === 'all') return fullStats;
+        return fullStats.filter(s => s.month.startsWith(selectedYear));
+    }, [fullStats, selectedYear]);
+
+    if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
+
+    return (
+        <div className="space-y-6 animate-fade-in w-full max-w-5xl mx-auto">
+             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
+                <div className="flex items-center gap-3">
+                    <div className="bg-orange-500 p-2 rounded-lg text-white"><Calendar className="w-6 h-6" /></div>
+                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Rapport Mensuel</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-sm font-bold text-gray-500 dark:text-gray-400">Année :</label>
+                    <select 
+                        value={selectedYear} 
+                        onChange={(e) => setSelectedYear(e.target.value)}
+                        className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                    >
+                        <option value="all">Toutes les années</option>
+                        {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                </div>
             </div>
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
@@ -626,16 +909,7 @@ const InvestmentTrackerApp = () => {
   const getAccountCurrentValueInEur = (acc) => { const raw = getAccountCurrentValueRaw(acc); const rate = parseFloat(acc.exchangeRate || 1); return raw * rate; };
   
   const getAccountInvestedTotalRaw = (acc) => {
-      if (!acc.movements) return 0;
-      return acc.movements.reduce((sum, m) => {
-        if (m.type === 'deposit') return sum + parseFloat(m.amount);
-        if (m.type === 'interest') return sum + parseFloat(m.amount);
-        if (m.type === 'withdrawal') {
-             if (m.capitalPart !== undefined && m.capitalPart !== null) return sum - parseFloat(m.capitalPart);
-             return sum - parseFloat(m.amount);
-        }
-        return sum;
-      }, 0);
+      return getNetInvestedUntilDate(acc.movements, new Date().toISOString());
   };
   const getAccountInvestedAmountInEur = (acc) => { const inv = getAccountInvestedTotalRaw(acc); const rate = parseFloat(acc.exchangeRate || 1); return inv * rate; };
   
@@ -644,27 +918,59 @@ const InvestmentTrackerApp = () => {
   const totalNetGainLoss = useMemo(() => totalPatrimony - totalInvestedGlobal, [totalPatrimony, totalInvestedGlobal]);
   const getTotalByBrokerInEur = (b) => b.accounts.reduce((sum, a) => sum + getAccountCurrentValueInEur(a), 0);
 
-  const globalTRI = useMemo(() => {
-    let allMovements = []; let currentTotalValue = 0;
+  const performanceStats = useMemo(() => {
+    let allMovements = []; 
+    let allSnapshots = [];
+    let currentTotalValue = 0;
+    
     brokers.forEach(b => {
         b.accounts.forEach(a => {
             const rate = parseFloat(a.exchangeRate || 1);
-            currentTotalValue += getAccountCurrentValueRaw(a) * rate;
+            const currentValRaw = getAccountCurrentValueRaw(a);
+            currentTotalValue += currentValRaw * rate;
+            
             if(a.movements) {
-                const movesEur = a.movements.map(m => ({ ...m, amount: parseFloat(m.amount) * rate }));
+                const movesEur = a.movements.map(m => ({ 
+                    ...m, 
+                    amount: parseFloat(m.amount) * rate,
+                    preValuation: m.preValuation ? parseFloat(m.preValuation) * rate : null
+                }));
                 allMovements = [...allMovements, ...movesEur];
+            }
+            
+            if(a.snapshots) {
+                const snapsEur = a.snapshots.map(s => ({
+                    ...s,
+                    amount: parseFloat(s.amount) * rate
+                }));
+                allSnapshots = [...allSnapshots, ...snapsEur];
             }
         });
     });
-    return calculateXIRR(allMovements, currentTotalValue);
+    
+    // Pour le TWR global, on regroupe les snapshots par date
+    const globalSnapshotsMap = {};
+    allSnapshots.forEach(s => {
+        globalSnapshotsMap[s.date] = (globalSnapshotsMap[s.date] || 0) + s.amount;
+    });
+    const globalSnapshots = Object.entries(globalSnapshotsMap).map(([date, amount]) => ({ date, amount }));
+
+    return {
+        tri: calculateXIRR(allMovements, currentTotalValue),
+        twr: calculateTWR(allMovements, globalSnapshots, currentTotalValue)
+    };
   }, [brokers]);
+
+  const globalTRI = performanceStats.tri;
+  const globalTWR = performanceStats.twr;
 
   const getSortedAccounts = (accounts, broker) => {
     const sortableAccounts = accounts.map(acc => ({
         ...acc,
         currentValueEur: getAccountCurrentValueInEur(acc),
         investedTotalEur: getAccountInvestedAmountInEur(acc),
-        tri: calculateXIRR(acc.movements, getAccountCurrentValueRaw(acc))
+        tri: calculateXIRR(acc.movements, getAccountCurrentValueRaw(acc)),
+        twr: calculateTWR(acc.movements || [], acc.snapshots || [], getAccountCurrentValueRaw(acc))
     }));
     return [...sortableAccounts].sort((a, b) => {
       let aValue = 0, bValue = 0;
@@ -686,19 +992,64 @@ const InvestmentTrackerApp = () => {
 
   const globalCategoryDistribution = useMemo(() => {
     const dist = {};
-    brokers.flatMap(b => b.accounts).forEach(acc => {
-      const last = getLatestSnapshot(acc);
-      const rate = parseFloat(acc.exchangeRate || 1);
-      if (last?.categories) last.categories.forEach(c => {
-        const v = parseFloat(c.amount || 0) * rate;
-        dist[c.type] = (dist[c.type] || 0) + v;
+    brokers.forEach(b => {
+      b.accounts.forEach(acc => {
+        const last = getLatestSnapshot(acc);
+        const rate = parseFloat(acc.exchangeRate || 1);
+        if (last?.categories) last.categories.forEach(c => {
+          const v = parseFloat(c.amount || 0) * rate;
+          if (!dist[c.type]) dist[c.type] = { value: 0, accounts: [] };
+          dist[c.type].value += v;
+          dist[c.type].accounts.push({
+            brokerName: b.name,
+            accountName: acc.name,
+            accountId: acc.id,
+            value: v,
+            currency: acc.currency || 'EUR'
+          });
+        });
       });
     });
-    const total = Object.values(dist).reduce((a, b) => a + b, 0);
+
+    const absTotal = Object.values(dist).reduce((a, b) => a + Math.abs(b.value), 0);
+    return Object.entries(dist).map(([k, data]) => {
+      const i = INVESTMENT_CATEGORIES.find(c => c.value === k);
+      return {
+        label: i?.label || k,
+        value: data.value,
+        color: i?.color || '#999',
+        percentage: absTotal ? (Math.abs(data.value) / absTotal * 100).toFixed(1) : 0,
+        type: k,
+        accounts: data.accounts.sort((a, b) => b.value - a.value)
+      };
+    }).sort((a, b) => b.value - a.value);
+  }, [brokers]);
+
+  const crossDistributionData = useMemo(() => {
+      const allAccountIds = [...new Set(brokers.flatMap(b => b.accounts.map(a => a.id)))];
+      const accountNames = {};
+      brokers.forEach(b => b.accounts.forEach(a => accountNames[a.id] = `${b.name} - ${a.name}`));
+
+      return globalCategoryDistribution.map(cat => {
+          const row = { name: cat.label, total: cat.value };
+          cat.accounts.forEach(acc => {
+              row[acc.accountId] = acc.value;
+          });
+          return row;
+      });
+  }, [globalCategoryDistribution, brokers]);
+
+  const globalAccountTypeDistribution = useMemo(() => {
+    const dist = {};
+    brokers.flatMap(b => b.accounts).forEach(acc => {
+      const val = getAccountCurrentValueInEur(acc);
+      const type = acc.type || 'Autre';
+      dist[type] = (dist[type] || 0) + val;
+    });
     const absTotal = Object.values(dist).reduce((a, b) => a + Math.abs(b), 0);
     return Object.entries(dist).map(([k, v]) => {
-      const i = INVESTMENT_CATEGORIES.find(c => c.value === k);
-      return { label: i?.label || k, value: v, color: i?.color || '#999', percentage: absTotal ? (Math.abs(v)/absTotal*100).toFixed(1) : 0, type: k };
+      const t = ACCOUNT_TYPES.find(type => type.value === k);
+      return { label: t?.label || k, value: v, color: t?.color || '#9CA3AF', percentage: absTotal ? (Math.abs(v)/absTotal*100).toFixed(1) : 0, type: k };
     }).sort((a, b) => b.value - a.value);
   }, [brokers]);
 
@@ -806,24 +1157,229 @@ const InvestmentTrackerApp = () => {
     const currency = selectedAccount.currency || 'EUR'; 
     const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; 
     const tri = calculateXIRR(selectedAccount.movements, currentVal);
+    const twr = calculateTWR(selectedAccount.movements || [], selectedAccount.snapshots || [], currentVal);
 
-    return (<div className="space-y-6 animate-fade-in w-full"><div className="flex items-center gap-4"><button onClick={() => { setView('accounts'); setSelectedAccount(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><div className="flex items-center gap-2"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedAccount.name}</h2>{currency !== 'EUR' && <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 text-xs font-bold rounded">{currency}</span>}</div><p className="text-gray-500 dark:text-gray-400">{selectedBroker.name}</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Valeur Actuelle</div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={currentVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg cursor-pointer hover:border-blue-300 dark:hover:border-blue-500 group" onClick={() => openModal('movementList')}><div className="text-sm text-gray-500 dark:text-gray-400 mb-1 flex items-center justify-between">Capital Investi <Edit2 className="w-3 h-3 text-gray-300 group-hover:text-blue-500 transition-colors" /></div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={investedVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Plus/Moins Value</div><div className="text-2xl font-bold text-gray-900 dark:text-white">{investedVal > 0 ? (currentVal - investedVal > 0 ? '+' : '') : ''} <BlurMoney amount={investedVal > 0 ? (currentVal - investedVal) : 0} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Performance</div><div className="text-2xl font-bold flex items-center"><PerformanceBadge current={currentVal} invested={investedVal} tri={tri} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg h-fit"><h3 className="font-bold mb-4 text-gray-800 dark:text-white">Allocation</h3>{dist.length > 0 ? (<div className="space-y-3 pt-2">{dist.map((d, i) => (<div key={i} className="flex justify-between items-center text-sm"><span className="flex items-center text-gray-600 dark:text-gray-300 font-medium"><div className="w-2 h-2 rounded-full mr-3" style={{backgroundColor: d.color}}></div>{d.label}</span><span className="font-bold text-gray-800 dark:text-white"><BlurMoney amount={parseFloat(d.amount)} currency={symbol} privacyMode={privacyMode} /></span></div>))}</div>) : <p className="text-gray-400 text-sm">Pas de données</p>}</div><div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Évolution ({currency})</h3><div className="h-72">{chartData.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis domain={['dataMin', 'dataMax']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : `${(v/1000).toFixed(0)}k`} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '****' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} /><Legend /><Line isAnimationActive={false} name="Valeur" type="monotone" dataKey="val" stroke="#2563EB" strokeWidth={3} dot={{r:3}} activeDot={{r:6}} /><Line isAnimationActive={false} name="Investi" type="monotone" dataKey="invested" stroke="#10B981" strokeWidth={2} strokeDasharray="5 5" dot={false} /></LineChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-lg">Ajoutez au moins 2 valorisations</div>}</div></div></div><div className="flex gap-4 mt-8"><button onClick={() => openModal('movementList')} className="flex-1 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 px-4 py-3 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/30 font-bold flex items-center justify-center gap-2 shadow-sm transition-all"><History className="w-5 h-5" /> Mouvements</button><button onClick={() => openModal('snapshot')} className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 shadow-lg font-bold flex items-center justify-center gap-2 transition-all"><PlusCircle className="w-5 h-5" /> Nouvelle Valorisation</button></div><div className="mt-6 space-y-3"><h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Historique de valorisation</h3>{[...snapshots].reverse().map((s, i) => { const prev = snapshots[snapshots.length - 2 - i]; const diff = prev ? parseFloat(s.amount) - parseFloat(prev.amount) : 0; return (<div key={s.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex justify-between items-center hover:shadow-lg transition-all"><div><div className="font-bold text-gray-800 dark:text-white">{new Date(s.date).toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'})}</div><div className="text-sm flex items-center mt-1"><span className="font-bold text-gray-700 dark:text-gray-300 mr-3"><BlurMoney amount={parseFloat(s.amount)} currency={symbol} privacyMode={privacyMode} /></span>{prev && <span className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded ${diff >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>{diff > 0 ? '+' : ''}<BlurMoney amount={diff} currency={symbol} privacyMode={privacyMode} /></span>}</div></div><div className="flex gap-1"><button onClick={() => openModal('snapshot', s)} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg"><Edit2 className="w-5 h-5" /></button><button onClick={() => deleteSnapshot(selectedBroker.id, selectedAccount.id, s.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"><Trash2 className="w-5 h-5" /></button></div></div>); })}</div></div>);
+    return (<div className="space-y-6 animate-fade-in w-full"><div className="flex items-center gap-4"><button onClick={() => { setView('accounts'); setSelectedAccount(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><div className="flex items-center gap-2"><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedAccount.name}</h2>{currency !== 'EUR' && <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 text-xs font-bold rounded">{currency}</span>}</div><p className="text-gray-500 dark:text-gray-400">{selectedBroker.name}</p></div></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Valeur Actuelle</div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={currentVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg cursor-pointer hover:border-blue-300 dark:hover:border-blue-500 group" onClick={() => openModal('movementList')}><div className="text-sm text-gray-500 dark:text-gray-400 mb-1 flex items-center justify-between">Capital Investi <Edit2 className="w-3 h-3 text-gray-300 group-hover:text-blue-500 transition-colors" /></div><div className="text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={investedVal} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Plus/Moins Value</div><div className="text-2xl font-bold text-gray-900 dark:text-white">{investedVal > 0 ? (currentVal - investedVal > 0 ? '+' : '') : ''} <BlurMoney amount={investedVal > 0 ? (currentVal - investedVal) : 0} currency={symbol} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Performance</div><div className="text-2xl font-bold flex items-center"><PerformanceBadge current={currentVal} invested={investedVal} tri={tri} twr={twr} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg h-fit"><h3 className="font-bold mb-4 text-gray-800 dark:text-white">Allocation</h3>{dist.length > 0 ? (<div className="space-y-3 pt-2">{dist.map((d, i) => (<div key={i} className="flex justify-between items-center text-sm"><span className="flex items-center text-gray-600 dark:text-gray-300 font-medium"><div className="w-2 h-2 rounded-full mr-3" style={{backgroundColor: d.color}}></div>{d.label}</span><span className="font-bold text-gray-800 dark:text-white"><BlurMoney amount={parseFloat(d.amount)} currency={symbol} privacyMode={privacyMode} /></span></div>))}</div>) : <p className="text-gray-400 text-sm">Pas de données</p>}</div><div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Évolution ({currency})</h3><div className="h-72">{chartData.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis domain={['dataMin', 'dataMax']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : `${(v/1000).toFixed(0)}k`} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '****' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} /><Legend /><Line isAnimationActive={false} name="Valeur" type="monotone" dataKey="val" stroke="#2563EB" strokeWidth={3} dot={{r:3}} activeDot={{r:6}} /><Line isAnimationActive={false} name="Investi" type="monotone" dataKey="invested" stroke="#10B981" strokeWidth={2} strokeDasharray="5 5" dot={false} /></LineChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-lg">Ajoutez au moins 2 valorisations</div>}</div></div></div><div className="flex gap-4 mt-8"><button onClick={() => openModal('movementList')} className="flex-1 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 px-4 py-3 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/30 font-bold flex items-center justify-center gap-2 shadow-sm transition-all"><History className="w-5 h-5" /> Mouvements</button><button onClick={() => openModal('snapshot')} className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 shadow-lg font-bold flex items-center justify-center gap-2 transition-all"><PlusCircle className="w-5 h-5" /> Nouvelle Valorisation</button></div><div className="mt-6 space-y-3"><h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Historique de valorisation</h3>{[...snapshots].reverse().map((s, i) => { const prev = snapshots[snapshots.length - 2 - i]; const diff = prev ? parseFloat(s.amount) - parseFloat(prev.amount) : 0; return (<div key={s.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex justify-between items-center hover:shadow-lg transition-all"><div><div className="font-bold text-gray-800 dark:text-white">{new Date(s.date).toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'})}</div><div className="text-sm flex items-center mt-1"><span className="font-bold text-gray-700 dark:text-gray-300 mr-3"><BlurMoney amount={parseFloat(s.amount)} currency={symbol} privacyMode={privacyMode} /></span>{prev && <span className={`flex items-center text-xs font-semibold px-2 py-0.5 rounded ${diff >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>{diff > 0 ? '+' : ''}<BlurMoney amount={diff} currency={symbol} privacyMode={privacyMode} /></span>}</div></div><div className="flex gap-1"><button onClick={() => openModal('snapshot', s)} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg"><Edit2 className="w-5 h-5" /></button><button onClick={() => deleteSnapshot(selectedBroker.id, selectedAccount.id, s.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"><Trash2 className="w-5 h-5" /></button></div></div>); })}</div></div>);
   };
   const Dashboard = () => {
+    const [expandedCategory, setExpandedCategory] = useState(null);
     const allSnapshots = brokers.flatMap(b => b.accounts.map(a => ({ account: a, snapshots: a.snapshots || [] }))).flatMap(item => item.snapshots.map(s => ({ ...s, rate: item.account.exchangeRate || 1 }))); const allDates = [...new Set(allSnapshots.map(s => s.date))].sort();
-    const evolution = allDates.map(date => { const totalAtDate = brokers.reduce((sum, broker) => { return sum + broker.accounts.reduce((accSum, acc) => { const relevantSnap = acc.snapshots?.filter(s => s.date <= date).sort((a,b) => new Date(b.date) - new Date(a.date))[0]; const amount = relevantSnap ? parseFloat(relevantSnap.amount) : 0; const rate = parseFloat(acc.exchangeRate || 1); return accSum + (amount * rate); }, 0); }, 0); const investedAtDate = brokers.reduce((sum, broker) => { return sum + broker.accounts.reduce((accSum, acc) => { if(!acc.movements) return accSum; const totalMovements = acc.movements.filter(m => m.date <= date).reduce((mSum, m) => {
-        if(m.type === 'deposit') return mSum + parseFloat(m.amount);
-        if(m.type === 'interest') return mSum + parseFloat(m.amount);
-        if (m.type === 'withdrawal') {
-             if (m.capitalPart !== undefined && m.capitalPart !== null) {
-                 return mSum - parseFloat(m.capitalPart);
-             }
-             return mSum - parseFloat(m.amount);
-        }
-        return mSum;
-    }, 0); return accSum + (totalMovements * parseFloat(acc.exchangeRate || 1)); }, 0); }, 0); return { date: new Date(date).toLocaleDateString('fr-FR', {month:'short', year:'2-digit'}), valeur: totalAtDate, investi: investedAtDate > 0 ? investedAtDate : 0 }; }); const progress = Math.min((totalPatrimony / patrimonyGoal) * 100, 100);
-    return (<div className="space-y-8 animate-fade-in w-full"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg relative overflow-hidden"><div className="flex justify-between items-center mb-4 relative z-10"><div><h2 className="text-lg font-bold text-gray-800 dark:text-white">Objectif Patrimonial</h2><p className="text-gray-500 dark:text-gray-400 text-sm">Progression vers votre cible</p></div><button onClick={() => openModal('goal')} className="p-2 bg-gray-50 dark:bg-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 transition-colors"><Target className="w-5 h-5" /></button></div><div className="relative z-10"><div className="flex justify-between items-end mb-2"><span className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></span><span className="text-sm font-semibold text-gray-500 dark:text-gray-400"><BlurMoney amount={patrimonyGoal} privacyMode={privacyMode} /></span></div><div className="w-full bg-gray-100 dark:bg-slate-700 rounded-full h-4 overflow-hidden border border-gray-200 dark:border-slate-600"><div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-1000 ease-out" style={{width: `${progress}%`}}></div></div><div className="text-right text-xs font-bold text-blue-600 dark:text-blue-400 mt-1">{progress.toFixed(1)}% atteint</div></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-6"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Patrimoine Total</div><div className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Capital Investi</div><div className="text-3xl font-bold text-gray-700 dark:text-gray-200"><BlurMoney amount={totalInvestedGlobal} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Plus/Moins Value</div><div className={`text-3xl font-bold ${totalNetGainLoss >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>{totalNetGainLoss >= 0 ? '+' : ''}<BlurMoney amount={totalNetGainLoss} privacyMode={privacyMode} /></div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between"><div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Performance Globale</div><div className="text-3xl font-bold"><PerformanceBadge current={totalPatrimony} invested={totalInvestedGlobal} tri={globalTRI} /></div></div></div><div className="grid grid-cols-1 lg:grid-cols-2 gap-8"><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg"><h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3><div className="h-72">{evolution.length > 1 ? (<ResponsiveContainer width="100%" height="100%"><AreaChart data={evolution}><defs><linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.1}/><stop offset="95%" stopColor="#10B981" stopOpacity={0}/></linearGradient><linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64748B" stopOpacity={0.1}/><stop offset="95%" stopColor="#64748B" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} /><XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" /><YAxis domain={['dataMin', 'dataMax']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : (v/1000).toFixed(0)+'k'} /><Tooltip contentStyle={{borderRadius:'8px', border:'none', boxShadow:'0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000'}} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} /><Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" /><Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" /></AreaChart></ResponsiveContainer>) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Ajoutez des valorisations pour voir le graphique</div>}</div></div><div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col"><div className="flex justify-between items-center mb-6"><h3 className="font-bold flex items-center gap-2 text-lg text-gray-800 dark:text-white"><PieChartIcon className="w-5 h-5 text-blue-500" /> Répartition & Cibles</h3><button onClick={() => openModal('allocation')} className="text-xs bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors"><Target className="w-3 h-3" /> Définir Cible</button></div><div className="space-y-5 overflow-y-auto pr-2 flex-1">{globalCategoryDistribution.length > 0 ? globalCategoryDistribution.map((d, i) => { const targetPct = targetAllocation[d.type] || 0; const idealAmount = totalPatrimony * (targetPct / 100); const delta = idealAmount - d.value; const needsAction = Math.abs(delta) > 100; 
-  const isNegative = d.value < 0;  return (<div key={i} className="group"><div className="flex justify-between text-sm mb-1.5"><span className="font-medium text-gray-700 dark:text-gray-300 flex items-center"><div className="w-2 h-2 rounded-full mr-2" style={{backgroundColor: d.color}}></div>{d.label}</span><div className="text-right"><span className={`font-bold block ${isNegative ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}><BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span></span></div></div><div className="relative w-full h-2.5 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden"><div className="absolute top-0 left-0 h-full transition-all duration-500" style={{width: `${d.percentage}%`, backgroundColor: d.color, opacity: 0.8}}></div>{targetPct > 0 && <div className="absolute top-0 w-1 h-full bg-black/50 dark:bg-white/50 z-10" style={{left: `${targetPct}%`}}></div>}</div>{targetPct > 0 && (<div className="flex justify-between items-center mt-1 text-xs"><span className="text-gray-400">Cible : {targetPct}%</span>{needsAction && !isNegative && (<span className={`font-bold ${delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-500 dark:text-red-400'} flex items-center gap-1`}>{delta > 0 ? 'Acheter' : 'Vendre'} <BlurMoney amount={Math.abs(delta)} privacyMode={privacyMode} /></span>)}</div>)}</div>); }) : <div className="h-full flex items-center justify-center text-gray-400 py-20">Aucune donnée</div>}</div></div></div></div>);
+    const evolution = allDates.map(date => {
+        const totalAtDate = brokers.reduce((sum, broker) => {
+            return sum + broker.accounts.reduce((accSum, acc) => {
+                const relevantSnap = acc.snapshots?.filter(s => s.date <= date).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+                const amount = relevantSnap ? parseFloat(relevantSnap.amount) : 0;
+                const rate = parseFloat(acc.exchangeRate || 1);
+                return accSum + (amount * rate);
+            }, 0);
+        }, 0);
+        const investedAtDate = brokers.reduce((sum, broker) => {
+            return sum + broker.accounts.reduce((accSum, acc) => {
+                const investedTotal = getNetInvestedUntilDate(acc.movements || [], date);
+                return accSum + (investedTotal * parseFloat(acc.exchangeRate || 1));
+            }, 0);
+        }, 0);
+        return { 
+            date: new Date(date).toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), 
+            valeur: totalAtDate, 
+            investi: investedAtDate > 0 ? investedAtDate : 0 
+        };
+    });
+    const progress = Math.min((totalPatrimony / patrimonyGoal) * 100, 100);
+    const accountIds = [...new Set(brokers.flatMap(b => b.accounts.map(a => a.id)))];
+    const accountNames = {};
+    const accountColors = {};
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#EF4444', '#14B8A6', '#6B7280'];
+    
+    brokers.forEach(b => b.accounts.forEach((a, i) => {
+        accountNames[a.id] = `${b.name} - ${a.name}`;
+        accountColors[a.id] = colors[Object.keys(accountNames).length % colors.length];
+    }));
+
+    return (
+        <div className="space-y-8 animate-fade-in w-full">
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg relative overflow-hidden">
+                <div className="flex justify-between items-center mb-4 relative z-10">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-800 dark:text-white">Objectif Patrimonial</h2>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm">Progression vers votre cible</p>
+                    </div>
+                    <button onClick={() => openModal('goal')} className="p-2 bg-gray-50 dark:bg-slate-700 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-gray-300 transition-colors">
+                        <Target className="w-5 h-5" />
+                    </button>
+                </div>
+                <div className="relative z-10">
+                    <div className="flex justify-between items-end mb-2">
+                        <span className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></span>
+                        <span className="text-sm font-semibold text-gray-500 dark:text-gray-400"><BlurMoney amount={patrimonyGoal} privacyMode={privacyMode} /></span>
+                    </div>
+                    <div className="w-full bg-gray-100 dark:bg-slate-700 rounded-full h-4 overflow-hidden border border-gray-200 dark:border-slate-600">
+                        <div className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-1000 ease-out" style={{ width: `${progress}%` }}></div>
+                    </div>
+                    <div className="text-right text-xs font-bold text-blue-600 dark:text-blue-400 mt-1">{progress.toFixed(1)}% atteint</div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between">
+                    <div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Patrimoine Total</div>
+                    <div className="text-3xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between">
+                    <div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Capital Investi</div>
+                    <div className="text-3xl font-bold text-gray-700 dark:text-gray-200"><BlurMoney amount={totalInvestedGlobal} privacyMode={privacyMode} /></div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between">
+                    <div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Plus/Moins Value</div>
+                    <div className={`text-3xl font-bold ${totalNetGainLoss >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
+                        {totalNetGainLoss >= 0 ? '+' : ''}<BlurMoney amount={totalNetGainLoss} privacyMode={privacyMode} />
+                    </div>
+                </div>
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col justify-between">
+                    <div className="text-gray-500 dark:text-gray-400 font-medium mb-1">Performance Globale</div>
+                    <div className="text-3xl font-bold"><PerformanceBadge current={totalPatrimony} invested={totalInvestedGlobal} tri={globalTRI} twr={globalTWR} /></div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                    <h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3>
+                    <div className="h-72">
+                        {evolution.length > 1 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={evolution}>
+                                    <defs>
+                                        <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.1} /><stop offset="95%" stopColor="#10B981" stopOpacity={0} /></linearGradient>
+                                        <linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64748B" stopOpacity={0.1} /><stop offset="95%" stopColor="#64748B" stopOpacity={0} /></linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} />
+                                    <XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" />
+                                    <YAxis domain={['dataMin', 'dataMax']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : (v / 1000).toFixed(0) + 'k'} />
+                                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000' }} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        ) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Ajoutez des valorisations pour voir le graphique</div>}
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg flex flex-col">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="font-bold flex items-center gap-2 text-lg text-gray-800 dark:text-white"><PieChartIcon className="w-5 h-5 text-blue-500" /> Répartition Actifs & Enveloppes</h3>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => openModal('allocation')} className="text-xs bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition-colors"><Target className="w-3 h-3" /> Cible</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 flex flex-col sm:flex-row gap-6 min-h-0 overflow-hidden">
+                        <div className="flex-1 flex flex-col h-[400px] sm:h-auto">
+                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 px-1">Par Type d'Actifs</h4>
+                            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                                {globalCategoryDistribution.length > 0 ? globalCategoryDistribution.map((d, i) => {
+                                    const targetPct = targetAllocation[d.type] || 0;
+                                    const idealAmount = totalPatrimony * (targetPct / 100);
+                                    const delta = idealAmount - d.value;
+                                    const needsAction = Math.abs(delta) > 100;
+                                    const isNegative = d.value < 0;
+                                    return (
+                                        <div key={i} className="group">
+                                            <div className="flex justify-between text-sm mb-1.5">
+                                                <span className="font-medium text-gray-700 dark:text-gray-300 flex items-center truncate max-w-[150px]"><div className="w-2 h-2 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: d.color }}></div>{d.label}</span>
+                                                <div className="text-right flex-shrink-0">
+                                                    <span className={`font-bold block ${isNegative ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                                                        <BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="relative w-full h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div className="absolute top-0 left-0 h-full transition-all duration-500" style={{ width: `${d.percentage}%`, backgroundColor: d.color, opacity: 0.8 }}></div>
+                                                {targetPct > 0 && <div className="absolute top-0 w-0.5 h-full bg-black/50 dark:bg-white/50 z-10" style={{ left: `${targetPct}%` }}></div>}
+                                            </div>
+                                            {targetPct > 0 && (
+                                                <div className="flex justify-between items-center mt-1 text-[10px]">
+                                                    <span className="text-gray-400">Cible : {targetPct}%</span>
+                                                    {needsAction && !isNegative && (
+                                                        <span className={`font-bold ${delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-500 dark:text-red-400'} flex items-center gap-1`}>
+                                                            {delta > 0 ? 'Acheter' : 'Vendre'} <BlurMoney amount={Math.abs(delta)} privacyMode={privacyMode} />
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                }) : <div className="h-full flex items-center justify-center text-gray-400">Aucun actif</div>}
+                            </div>
+                        </div>
+                        <div className="w-px bg-gray-100 dark:bg-slate-700 hidden sm:block"></div>
+                        <div className="flex-1 flex flex-col h-[400px] sm:h-auto">
+                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 px-1">Par Enveloppe (Types)</h4>
+                            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                                {globalAccountTypeDistribution.length > 0 ? globalAccountTypeDistribution.map((d, i) => {
+                                    const isNegative = d.value < 0;
+                                    return (
+                                        <div key={i} className="group">
+                                            <div className="flex justify-between text-sm mb-1.5">
+                                                <span className="font-medium text-gray-700 dark:text-gray-300 flex items-center truncate max-w-[150px]"><div className="w-2 h-2 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: d.color }}></div>{d.label}</span>
+                                                <div className="text-right flex-shrink-0">
+                                                    <span className={`font-bold block ${isNegative ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                                                        <BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="relative w-full h-2 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div className="absolute top-0 left-0 h-full transition-all duration-500" style={{ width: `${d.percentage}%`, backgroundColor: d.color, opacity: 0.8 }}></div>
+                                            </div>
+                                        </div>
+                                    );
+                                }) : <div className="h-full flex items-center justify-center text-gray-400">Aucun compte</div>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                <h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><BarChart3 className="w-5 h-5 text-indigo-500" /> Répartition des actifs par enveloppe</h3>
+                <div className="h-80">
+                    {crossDistributionData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={crossDistributionData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} />
+                                <XAxis dataKey="name" fontSize={12} stroke="#9CA3AF" />
+                                <YAxis fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : (v / 1000).toFixed(0) + 'k'} />
+                                <Tooltip
+                                    cursor={{fill: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}}
+                                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', padding: '12px' }}
+                                    formatter={(value, name, props) => {
+                                        if (name === "total" || privacyMode) return null;
+                                        const accountName = accountNames[name] || name;
+                                        const percentage = ((value / props.payload.total) * 100).toFixed(1);
+                                        return [
+                                            <span className="flex flex-col">
+                                                <span className="font-bold">{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)}</span>
+                                                <span className="text-[10px] opacity-70">{percentage}% de la classe d'actif</span>
+                                            </span>,
+                                            accountName
+                                        ];
+                                    }}
+                                />
+                                {accountIds.map((id) => (
+                                    <Bar 
+                                        key={id} 
+                                        dataKey={id} 
+                                        stackId="a" 
+                                        fill={accountColors[id]} 
+                                        radius={[0, 0, 0, 0]}
+                                        isAnimationActive={false}
+                                    />
+                                ))}
+                            </BarChart>
+                        </ResponsiveContainer>
+                    ) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Pas de données d'actifs</div>}
+                </div>
+            </div>
+        </div>
+    );
   };
   
   return (
@@ -835,13 +1391,13 @@ const InvestmentTrackerApp = () => {
             <span className="hidden sm:inline">Suivi Investissements</span>
           </div>
           <nav className="flex items-center gap-1 bg-gray-100 dark:bg-slate-700 p-1 rounded-xl overflow-x-auto">
-            {['dashboard', 'brokers', 'simulation', 'history'].map(k => (
+            {['dashboard', 'brokers', 'movements', 'simulation', 'history'].map(k => (
                 <button 
                 key={k} 
                 onClick={() => { setView(k); setSelectedBroker(null); setSelectedAccount(null); }} 
                 className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${view === k ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
                 >
-                {k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'simulation' ? 'Simul' : 'Historique'}
+                {k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'movements' ? 'Mouvements' : k === 'simulation' ? 'Simul' : 'Historique'}
                 </button>
             ))}
             </nav>
@@ -863,13 +1419,13 @@ const InvestmentTrackerApp = () => {
           </div>
         </div>
       </header>
-      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
+      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard />}{view === 'brokers' && <BrokersView />}{view === 'accounts' && <AccountsView />}{view === 'snapshots' && <SnapshotsView />}{view === 'movements' && <MovementsGlobalView brokers={brokers} privacyMode={privacyMode} />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
       <Modal isOpen={modals.account} onClose={closeModal} title={editData ? "Modifier compte" : "Nouveau compte"}><AccountForm brokerId={selectedBroker?.id} onSubmit={handleSaveAccount} onCancel={closeModal} initialData={editData} /></Modal>
       <Modal isOpen={modals.snapshot} onClose={closeModal} title={editData ? "Modifier valorisation" : "Nouvelle valorisation"}><SnapshotForm brokerId={selectedBroker?.id} accountId={selectedAccount?.id} onSubmit={handleSaveSnapshot} onCancel={closeModal} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
-      <Modal isOpen={modals.movement} onClose={() => {closeModal(); openModal('movementList')}} title={editData ? "Modifier mouvement" : "Nouveau mouvement"}><MovementForm onSubmit={handleSaveMovement} onCancel={() => {closeModal(); openModal('movementList')}} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
+      <Modal isOpen={modals.movement} onClose={() => {closeModal(); openModal('movementList')}} title={editData ? "Modifier mouvement" : "Nouveau mouvement"}><MovementForm onSubmit={handleSaveMovement} onCancel={() => {closeModal(); openModal('movementList')}} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} lastValuation={getAccountCurrentValueRaw(selectedAccount || {})} /></Modal>
       <Modal isOpen={modals.transfer} onClose={closeModal} title="Effectuer un transfert"><TransferForm brokers={brokers} onSubmit={handleSaveTransfer} onCancel={closeModal} /></Modal>
       <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div><button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button><div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
       <Modal isOpen={modals.allocation} onClose={closeModal} title="Définir l'allocation cible"><TargetAllocationForm currentTargets={targetAllocation} onSubmit={(t) => { const newAlloc = t; saveUserData(undefined, undefined, newAlloc); closeModal(); showToast('Cibles mises à jour'); }} onCancel={closeModal} /></Modal>
@@ -882,10 +1438,125 @@ const InvestmentTrackerApp = () => {
 // --- COMPOSANTS FORMULAIRES EXTERNALISÉS (POUR ALLEGER LE FICHIER) ---
 const BrokerForm = ({ onSubmit, onCancel, initialValue = '' }) => { const [name, setName] = useState(initialValue); return (<div className="space-y-4"><div><label className={labelClass}>Nom</label><input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} className={inputClass} /></div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => name.trim() && onSubmit(name.trim())} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Enregistrer</button></div></div>); };
 const AccountForm = ({ brokerId, onSubmit, onCancel, initialData }) => { const [data, setData] = useState(initialData || { name: '', type: 'PEA', currency: 'EUR', exchangeRate: 1, notes: '' }); return (<div className="space-y-4"><div><label className={labelClass}>Nom</label><input autoFocus type="text" value={data.name} onChange={e => setData({...data, name: e.target.value})} className={inputClass} /></div><div className="grid grid-cols-2 gap-4"><div><label className={labelClass}>Type</label><select value={data.type} onChange={e => setData({...data, type: e.target.value})} className={inputClass}>{ACCOUNT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}</select></div><div><label className={labelClass}>Devise</label><select value={data.currency} onChange={e => setData({...data, currency: e.target.value})} className={inputClass}>{CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}</select></div></div>{data.currency !== 'EUR' && (<div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-lg border border-orange-200 dark:border-orange-800"><label className="text-sm font-bold text-orange-900 dark:text-orange-300">Taux de change</label><div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">1 {data.currency} = </span><input type="number" step="0.0001" value={data.exchangeRate} onChange={e => setData({...data, exchangeRate: e.target.value})} className="w-24 border p-1 rounded bg-white dark:bg-slate-800 dark:border-slate-600 dark:text-white" /><span className="text-sm dark:text-gray-300">EUR</span></div></div>)}<div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => data.name && onSubmit(brokerId, data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Enregistrer</button></div></div>); };
-const MovementForm = ({ onSubmit, onCancel, currencySymbol, initialData }) => { const [data, setData] = useState(initialData || { date: new Date().toISOString().split('T')[0], amount: '', type: 'deposit', preValuation: '' }); return (<div className="space-y-4"><div className="flex gap-2 p-1 bg-gray-100 dark:bg-slate-700 rounded-lg"><button onClick={() => setData({...data, type: 'deposit'})} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'deposit' ? 'bg-white dark:bg-slate-600 text-green-700 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><ArrowUpCircle className="w-4 h-4" /> Dépôt</button><button onClick={() => setData({...data, type: 'interest'})} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'interest' ? 'bg-white dark:bg-slate-600 text-yellow-600 dark:text-yellow-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><Percent className="w-4 h-4" /> Dividende</button><button onClick={() => setData({...data, type: 'withdrawal'})} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'withdrawal' ? 'bg-white dark:bg-slate-600 text-red-700 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><ArrowDownCircle className="w-4 h-4" /> Retrait</button></div>{data.type === 'withdrawal' && (<div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800"><label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur TOTALE du compte AVANT ce retrait</label><div className="flex items-center gap-2"><input type="number" step="0.01" value={data.preValuation} onChange={e => setData({...data, preValuation: e.target.value})} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Ex: 2000" /><span className="text-sm font-bold text-gray-500">{currencySymbol}</span></div><p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Nécessaire pour préserver la justesse de votre "Capital Investi".</p></div>)}<div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({...data, date: e.target.value})} className={inputClass} /></div><div><label className={labelClass}>Montant ({currencySymbol})</label><input autoFocus type="number" step="0.01" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className={`${inputClass} font-bold text-lg`} /></div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => data.amount && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">{initialData ? "Modifier" : "Valider"}</button></div></div>); };
-const TransferForm = ({ brokers, onSubmit, onCancel }) => { const [data, setData] = useState({ date: new Date().toISOString().split('T')[0], amount: '', sourceId: '', targetId: '', preValuation: '' }); const allAccounts = brokers.flatMap(b => b.accounts.map(a => ({ ...a, brokerName: b.name, brokerId: b.id }))); const sourceAccount = allAccounts.find(a => a.id == data.sourceId); const currencySymbol = sourceAccount ? (CURRENCIES.find(c => c.code === sourceAccount.currency)?.symbol || '€') : '€'; return (<div className="space-y-4"><div className="grid grid-cols-2 gap-4"><div><label className={labelClass}>De (Compte source)</label><select value={data.sourceId} onChange={e => setData({...data, sourceId: e.target.value})} className={inputClass}><option value="">Sélectionner</option>{allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.targetId}>{a.brokerName} - {a.name}</option>)}</select></div><div><label className={labelClass}>Vers (Compte cible)</label><select value={data.targetId} onChange={e => setData({...data, targetId: e.target.value})} className={inputClass}><option value="">Sélectionner</option>{allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.sourceId}>{a.brokerName} - {a.name}</option>)}</select></div></div>{data.sourceId && (<div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 animate-fade-in"><label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur du compte SOURCE avant transfert</label><div className="flex items-center gap-2"><input type="number" step="0.01" value={data.preValuation} onChange={e => setData({...data, preValuation: e.target.value})} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Total du compte source" /><span className="text-sm font-bold text-gray-500">{currencySymbol}</span></div><p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Permet de calculer la part de gains transférée.</p></div>)}<div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({...data, date: e.target.value})} className={inputClass} /></div><div><label className={labelClass}>Montant du transfert</label><input type="number" step="0.01" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className={inputClass} /></div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => data.amount && data.sourceId && data.targetId && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button></div></div>); };
+const MovementForm = ({ onSubmit, onCancel, currencySymbol, initialData, lastValuation }) => {
+    const [data, setData] = useState(initialData || {
+        date: new Date().toISOString().split('T')[0],
+        amount: '',
+        type: 'deposit',
+        preValuation: (initialData?.type === 'withdrawal' || !initialData) ? (initialData?.preValuation || lastValuation || '') : ''
+    });
+
+    const handleTypeChange = (type) => {
+        setData(prev => ({
+            ...prev,
+            type,
+            preValuation: type === 'withdrawal' ? (prev.preValuation || lastValuation || '') : prev.preValuation
+        }));
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="flex gap-2 p-1 bg-gray-100 dark:bg-slate-700 rounded-lg">
+                <button onClick={() => handleTypeChange('deposit')} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'deposit' ? 'bg-white dark:bg-slate-600 text-green-700 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><ArrowUpCircle className="w-4 h-4" /> Dépôt</button>
+                <button onClick={() => handleTypeChange('interest')} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'interest' ? 'bg-white dark:bg-slate-600 text-yellow-600 dark:text-yellow-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><Percent className="w-4 h-4" /> Dividende</button>
+                <button onClick={() => handleTypeChange('withdrawal')} className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-md flex items-center justify-center gap-1 transition-all ${data.type === 'withdrawal' ? 'bg-white dark:bg-slate-600 text-red-700 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}><ArrowDownCircle className="w-4 h-4" /> Retrait</button>
+            </div>
+            {data.type === 'withdrawal' && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 animate-fade-in">
+                    <label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur TOTALE du compte AVANT ce retrait</label>
+                    <div className="flex items-center gap-2">
+                        <input type="number" step="0.01" value={data.preValuation} onChange={e => setData({ ...data, preValuation: e.target.value })} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Ex: 2000" />
+                        <span className="text-sm font-bold text-gray-500">{currencySymbol}</span>
+                    </div>
+                    <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">Suggéré : Dernière valorisation connue. Indispensable pour la justesse du "Capital Investi".</p>
+                </div>
+            )}
+            <div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({ ...data, date: e.target.value })} className={inputClass} /></div>
+            <div><label className={labelClass}>Montant ({currencySymbol})</label><input autoFocus type="number" step="0.01" value={data.amount} onChange={e => setData({ ...data, amount: e.target.value })} className={`${inputClass} font-bold text-lg`} /></div>
+            <div className="flex justify-end gap-2 pt-4">
+                <button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button>
+                <button onClick={() => data.amount && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">{initialData ? "Modifier" : "Valider"}</button>
+            </div>
+        </div>
+    );
+};
+const TransferForm = ({ brokers, onSubmit, onCancel }) => {
+    const [data, setData] = useState({ date: new Date().toISOString().split('T')[0], amount: '', sourceId: '', targetId: '', preValuation: '' });
+    const allAccounts = brokers.flatMap(b => b.accounts.map(a => ({ ...a, brokerName: b.name, brokerId: b.id })));
+    const sourceAccount = allAccounts.find(a => a.id == data.sourceId);
+    const currencySymbol = sourceAccount ? (CURRENCIES.find(c => c.code === sourceAccount.currency)?.symbol || '€') : '€';
+
+    const handleSourceChange = (id) => {
+        const acc = allAccounts.find(a => a.id == id);
+        let preVal = '';
+        if (acc && acc.snapshots?.length) {
+            preVal = acc.snapshots[acc.snapshots.length - 1].amount;
+        }
+        setData({ ...data, sourceId: id, preValuation: preVal });
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className={labelClass}>De (Compte source)</label>
+                    <select value={data.sourceId} onChange={e => handleSourceChange(e.target.value)} className={inputClass}>
+                        <option value="">Sélectionner</option>
+                        {allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.targetId}>{a.brokerName} - {a.name}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className={labelClass}>Vers (Compte cible)</label>
+                    <select value={data.targetId} onChange={e => setData({ ...data, targetId: e.target.value })} className={inputClass}>
+                        <option value="">Sélectionner</option>
+                        {allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.sourceId}>{a.brokerName} - {a.name}</option>)}
+                    </select>
+                </div>
+            </div>
+            {data.sourceId && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 animate-fade-in">
+                    <label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur du compte SOURCE avant transfert</label>
+                    <div className="flex items-center gap-2">
+                        <input type="number" step="0.01" value={data.preValuation} onChange={e => setData({ ...data, preValuation: e.target.value })} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Total du compte source" />
+                        <span className="text-sm font-bold text-gray-500">{currencySymbol}</span>
+                    </div>
+                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Permet de neutraliser l'impact du transfert sur le calcul de performance TWR.</p>
+                </div>
+            )}
+            <div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({ ...data, date: e.target.value })} className={inputClass} /></div>
+            <div><label className={labelClass}>Montant du transfert</label><input type="number" step="0.01" value={data.amount} onChange={e => setData({ ...data, amount: e.target.value })} className={inputClass} /></div>
+            <div className="flex justify-end gap-2 pt-4">
+                <button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button>
+                <button onClick={() => data.amount && data.sourceId && data.targetId && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button>
+            </div>
+        </div>
+    );
+};
 const SnapshotForm = ({ brokerId, accountId, onSubmit, onCancel, currencySymbol, initialData }) => { const [date, setDate] = useState(initialData ? initialData.date : new Date().toISOString().split('T')[0]); const [cats, setCats] = useState(INVESTMENT_CATEGORIES.map(c => { const existing = initialData?.categories?.find(k => k.type === c.value); return { type: c.value, amount: existing ? existing.amount : '' }; })); const total = cats.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0); return (<div className="space-y-4"><div><label className={labelClass}>Date</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputClass} /></div><div className="border-t border-gray-200 dark:border-slate-700 pt-4"><h4 className="text-sm font-bold mb-3 text-gray-900 dark:text-gray-100">Répartition</h4><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">{INVESTMENT_CATEGORIES.map(cat => { const val = cats.find(c => c.type === cat.value)?.amount || ''; const Icon = cat.icon; return (<div key={cat.value} className="flex items-center p-2.5 border border-gray-200 dark:border-slate-600 rounded-lg bg-gray-50 dark:bg-slate-700/50"><Icon className="w-5 h-5 mr-2" style={{color: cat.color}} /><span className="flex-1 text-sm font-medium text-gray-700 dark:text-gray-300">{cat.label}</span><input type="number" placeholder="0" step="0.01" value={val} onChange={e => setCats(cats.map(c => c.type === cat.value ? { ...c, amount: e.target.value } : c))} className="w-24 text-right p-1.5 border border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white outline-none focus:border-blue-500" /></div>); })}</div></div><div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg flex justify-between items-center"><span className="font-bold text-blue-900 dark:text-blue-300">Total</span><span className="font-bold text-2xl text-blue-700 dark:text-blue-400">{total.toLocaleString('fr-FR')} {currencySymbol}</span></div><div className="flex justify-end gap-2 pt-2"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const valid = cats.filter(c => c.amount !== '' && c.amount !== null && parseFloat(c.amount) !== 0).map(c => ({...c, amount: parseFloat(c.amount).toFixed(2)})); if(valid.length) onSubmit(brokerId, accountId, { date, categories: valid, id: initialData?.id }); else alert("Saisissez au moins un montant"); }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">{initialData ? "Modifier" : "Valider"}</button></div></div>); };
 const TargetAllocationForm = ({ currentTargets, onSubmit, onCancel }) => { const [targets, setTargets] = useState(INVESTMENT_CATEGORIES.map(c => ({ ...c, percent: currentTargets[c.value] || 0 }))); const totalPercent = targets.reduce((s, c) => s + parseFloat(c.percent || 0), 0); return (<div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-700 dark:text-gray-300">Total alloué :</span><span className={`font-bold text-lg ${totalPercent === 100 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{totalPercent}%</span></div><div className="max-h-80 overflow-y-auto space-y-2 pr-2">{targets.map(cat => (<div key={cat.value} className="flex items-center justify-between p-2 border border-gray-200 dark:border-slate-600 rounded-lg"><span className="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300"><div className="w-3 h-3 rounded-full mr-2" style={{backgroundColor: cat.color}}></div>{cat.label}</span><div className="flex items-center gap-2"><input type="number" min="0" max="100" value={cat.percent} onChange={e => setTargets(targets.map(t => t.value === cat.value ? { ...t, percent: parseFloat(e.target.value) || 0 } : t))} className="w-16 text-right p-1 border border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" /><span className="text-gray-500">%</span></div></div>))}</div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const mapping = {}; targets.forEach(t => { if(t.percent > 0) mapping[t.value] = t.percent; }); onSubmit(mapping); }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Enregistrer</button></div></div>); };
-const PerformanceBadge = ({ current, invested, tri }) => { if (!invested || parseFloat(invested) === 0) return null; const perf = ((parseFloat(current) - parseFloat(invested)) / parseFloat(invested)) * 100; const isPositive = perf >= 0; return (<div className="flex items-center gap-2"><div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md ${isPositive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>{isPositive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}{perf > 0 ? '+' : ''}{perf.toFixed(1)}%</div>{tri !== null && (<div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`} title="Taux de Rentabilité Interne (Performance annualisée)"><Activity className="w-3 h-3 mr-1" />TRI: {tri > 0 ? '+' : ''}{tri.toFixed(1)}%/an</div>)}</div>); };
+const PerformanceBadge = ({ current, invested, tri, twr }) => { 
+    if (!invested || parseFloat(invested) === 0) return null; 
+    const perf = ((parseFloat(current) - parseFloat(invested)) / parseFloat(invested)) * 100; 
+    const isPositive = perf >= 0; 
+    const isTwrPositive = twr >= 0;
+    return (
+        <div className="flex flex-wrap gap-2">
+            <div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md ${isPositive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`} title="Performance brute (Valeur finale vs Capital net versé)">
+                {isPositive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
+                {perf > 0 ? '+' : ''}{perf.toFixed(1)}%
+            </div>
+            {twr !== null && (
+                <div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md ${isTwrPositive ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'}`} title="Time-Weighted Return (Performance réelle du portefeuille, neutralise l'impact des flux)">
+                    <Activity className="w-3 h-3 mr-1" />TWR: {twr > 0 ? '+' : ''}{twr.toFixed(2)}%
+                </div>
+            )}
+            {tri !== null && (
+                <div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`} title="Taux de Rentabilité Interne (Performance annualisée, prend en compte le timing des flux)">
+                    <GitCompare className="w-3 h-3 mr-1" />TRI: {tri > 0 ? '+' : ''}{tri.toFixed(1)}%/an
+                </div>
+            )}
+        </div>
+    ); 
+};
 
 export default InvestmentTrackerApp;
