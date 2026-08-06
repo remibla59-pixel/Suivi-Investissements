@@ -595,6 +595,17 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
         return fullStats.filter(s => s.month.startsWith(selectedYear));
     }, [fullStats, selectedYear]);
 
+    const periodStats = useMemo(() => {
+        if (!stats.length) return null;
+        const totalGain = stats.reduce((acc, s) => acc + s.performance, 0);
+        const totalFlows = stats.reduce((acc, s) => acc + s.flow, 0);
+        
+        // Rendement cumulé (TWR) : on multiplie les (1 + yield) de chaque mois
+        const cumulativeYield = (stats.reduce((acc, s) => acc * (1 + (s.yield / 100)), 1) - 1) * 100;
+        
+        return { totalGain, totalFlows, cumulativeYield };
+    }, [stats]);
+
     if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
 
     return (
@@ -616,6 +627,30 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                     </select>
                 </div>
             </div>
+
+            {periodStats && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Gain/Perte Période</div>
+                        <div className={`text-xl font-bold ${periodStats.totalGain >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600'}`}>
+                            {periodStats.totalGain > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalGain} privacyMode={privacyMode} />
+                        </div>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Rendement Cumulé</div>
+                        <div className={`text-xl font-bold ${periodStats.cumulativeYield >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'}`}>
+                            {periodStats.cumulativeYield > 0 ? '+' : ''}{periodStats.cumulativeYield.toFixed(2)}%
+                        </div>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Flux Net Période</div>
+                        <div className="text-xl font-bold text-gray-700 dark:text-gray-200">
+                            {periodStats.totalFlows > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalFlows} privacyMode={privacyMode} />
+                        </div>
+                    </div>
+                </div>
+            )}
+
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
                 <div className="h-80">
