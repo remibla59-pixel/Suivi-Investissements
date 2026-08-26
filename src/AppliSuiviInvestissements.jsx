@@ -595,17 +595,6 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
         return fullStats.filter(s => s.month.startsWith(selectedYear));
     }, [fullStats, selectedYear]);
 
-    const periodStats = useMemo(() => {
-        if (!stats.length) return null;
-        const totalGain = stats.reduce((acc, s) => acc + s.performance, 0);
-        const totalFlows = stats.reduce((acc, s) => acc + s.flow, 0);
-        
-        // Rendement cumulé (TWR) : on multiplie les (1 + yield) de chaque mois
-        const cumulativeYield = (stats.reduce((acc, s) => acc * (1 + (s.yield / 100)), 1) - 1) * 100;
-        
-        return { totalGain, totalFlows, cumulativeYield };
-    }, [stats]);
-
     if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
 
     return (
@@ -627,30 +616,6 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                     </select>
                 </div>
             </div>
-
-            {periodStats && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Gain/Perte Période</div>
-                        <div className={`text-xl font-bold ${periodStats.totalGain >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600'}`}>
-                            {periodStats.totalGain > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalGain} privacyMode={privacyMode} />
-                        </div>
-                    </div>
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Rendement Cumulé</div>
-                        <div className={`text-xl font-bold ${periodStats.cumulativeYield >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'}`}>
-                            {periodStats.cumulativeYield > 0 ? '+' : ''}{periodStats.cumulativeYield.toFixed(2)}%
-                        </div>
-                    </div>
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Flux Net Période</div>
-                        <div className="text-xl font-bold text-gray-700 dark:text-gray-200">
-                            {periodStats.totalFlows > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalFlows} privacyMode={privacyMode} />
-                        </div>
-                    </div>
-                </div>
-            )}
-
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
                 <div className="h-80">
@@ -1166,13 +1131,11 @@ const InvestmentTrackerApp = () => {
     </div>
   );
   const AccountsView = () => {
-    const currentBroker = brokers.find(b => b.id === selectedBroker?.id) || selectedBroker;
-    if (!currentBroker) return <div className="p-20 text-center"><button onClick={() => setView('brokers')} className="text-blue-600 font-bold">Retour aux courtiers</button></div>;
-    const sortedAccounts = getSortedAccounts(currentBroker.accounts || [], currentBroker);
+    const sortedAccounts = getSortedAccounts(selectedBroker.accounts, selectedBroker);
     return (
       <div className="space-y-6 w-full animate-fade-in">
-        <div className="flex items-center gap-4"><button onClick={() => { setView('brokers'); setSelectedBroker(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{currentBroker.name}</h2></div></div>
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-2xl text-white shadow-xl flex justify-between items-center"><div><div className="text-blue-100 font-medium mb-2">Valorisation totale (EUR)</div><div className="text-5xl font-bold"><BlurMoney amount={getTotalByBrokerInEur(currentBroker)} privacyMode={privacyMode} /></div></div><div className="hidden sm:block p-4 bg-white/10 rounded-2xl"><Wallet className="w-12 h-12 text-white" /></div></div>
+        <div className="flex items-center gap-4"><button onClick={() => { setView('brokers'); setSelectedBroker(null); }} className="p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-300"><ArrowLeft className="w-6 h-6" /></button><div><h2 className="text-2xl font-bold text-gray-800 dark:text-white">{selectedBroker.name}</h2></div></div>
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-2xl text-white shadow-xl flex justify-between items-center"><div><div className="text-blue-100 font-medium mb-2">Valorisation totale (EUR)</div><div className="text-5xl font-bold"><BlurMoney amount={getTotalByBrokerInEur(selectedBroker)} privacyMode={privacyMode} /></div></div><div className="hidden sm:block p-4 bg-white/10 rounded-2xl"><Wallet className="w-12 h-12 text-white" /></div></div>
         <div className="flex justify-between items-center mt-8"><h3 className="text-xl font-bold text-gray-800 dark:text-white">Comptes</h3><div className="flex items-center gap-3"><button onClick={() => openModal('account')} className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 px-4 py-2 rounded-lg shadow-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"><PlusCircle className="w-5 h-5 text-blue-600" /> Nouveau compte</button></div></div>
         <div className="grid gap-4">{sortedAccounts.map(acc => { const type = ACCOUNT_TYPES.find(t => t.value === acc.type); const currency = acc.currency || 'EUR'; const symbol = CURRENCIES.find(c => c.code === currency)?.symbol || '€'; const investedTotal = getAccountInvestedTotalRaw(acc); return (<div key={acc.id} onClick={() => { setSelectedAccount(acc); setView('snapshots'); }} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg hover:shadow-xl cursor-pointer flex justify-between items-center group transition-all"><div className="flex items-center gap-5"><div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-gray-50 dark:bg-slate-700 border dark:border-slate-600" style={{color: type?.color}}><Wallet className="w-7 h-7" /></div><div><div className="flex items-center gap-3 mb-1"><h4 className="font-bold text-lg text-gray-900 dark:text-white">{acc.name}</h4><span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-300 font-medium border dark:border-slate-600">{type?.label}</span>{currency !== 'EUR' && <span className="text-xs bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 px-2 py-0.5 rounded-full text-orange-700 dark:text-orange-300 font-bold">{currency}</span>}</div><div className="flex items-baseline gap-3"><span className="text-xl font-bold text-gray-800 dark:text-gray-200"><BlurMoney amount={getAccountCurrentValueRaw(acc)} currency={symbol} privacyMode={privacyMode} /></span><PerformanceBadge current={getAccountCurrentValueRaw(acc)} invested={investedTotal} tri={acc.tri} /></div></div></div><div className="flex items-center gap-2"><button onClick={e => { e.stopPropagation(); openModal('account', acc); }} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-600 rounded-lg text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={e => { e.stopPropagation(); deleteAccount(selectedBroker.id, acc.id); }} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg text-gray-400 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button><ChevronRight className="w-5 h-5 text-gray-300 dark:text-gray-500 ml-2" /></div></div>); })}</div>
       </div>
