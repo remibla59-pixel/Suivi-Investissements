@@ -595,17 +595,6 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
         return fullStats.filter(s => s.month.startsWith(selectedYear));
     }, [fullStats, selectedYear]);
 
-    const periodStats = useMemo(() => {
-        if (!stats.length) return null;
-        const totalGain = stats.reduce((acc, s) => acc + s.performance, 0);
-        const totalFlows = stats.reduce((acc, s) => acc + s.flow, 0);
-        
-        // Rendement cumulé (TWR) : on multiplie les (1 + yield) de chaque mois
-        const cumulativeYield = (stats.reduce((acc, s) => acc * (1 + (s.yield / 100)), 1) - 1) * 100;
-        
-        return { totalGain, totalFlows, cumulativeYield };
-    }, [stats]);
-
     if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
 
     return (
@@ -627,30 +616,6 @@ const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                     </select>
                 </div>
             </div>
-
-            {periodStats && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Gain/Perte Période</div>
-                        <div className={`text-xl font-bold ${periodStats.totalGain >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600'}`}>
-                            {periodStats.totalGain > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalGain} privacyMode={privacyMode} />
-                        </div>
-                    </div>
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Rendement Cumulé</div>
-                        <div className={`text-xl font-bold ${periodStats.cumulativeYield >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500'}`}>
-                            {periodStats.cumulativeYield > 0 ? '+' : ''}{periodStats.cumulativeYield.toFixed(2)}%
-                        </div>
-                    </div>
-                    <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                        <div className="text-xs font-bold text-gray-400 uppercase mb-1">Flux Net Période</div>
-                        <div className="text-xl font-bold text-gray-700 dark:text-gray-200">
-                            {periodStats.totalFlows > 0 ? '+' : ''}<BlurMoney amount={periodStats.totalFlows} privacyMode={privacyMode} />
-                        </div>
-                    </div>
-                </div>
-            )}
-
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
                 <div className="h-80">
@@ -1515,58 +1480,7 @@ const MovementForm = ({ onSubmit, onCancel, currencySymbol, initialData, lastVal
         </div>
     );
 };
-const TransferForm = ({ brokers, onSubmit, onCancel }) => {
-    const [data, setData] = useState({ date: new Date().toISOString().split('T')[0], amount: '', sourceId: '', targetId: '', preValuation: '' });
-    const allAccounts = brokers.flatMap(b => b.accounts.map(a => ({ ...a, brokerName: b.name, brokerId: b.id })));
-    const sourceAccount = allAccounts.find(a => a.id == data.sourceId);
-    const currencySymbol = sourceAccount ? (CURRENCIES.find(c => c.code === sourceAccount.currency)?.symbol || '€') : '€';
-
-    const handleSourceChange = (id) => {
-        const acc = allAccounts.find(a => a.id == id);
-        let preVal = '';
-        if (acc && acc.snapshots?.length) {
-            preVal = acc.snapshots[acc.snapshots.length - 1].amount;
-        }
-        setData({ ...data, sourceId: id, preValuation: preVal });
-    };
-
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className={labelClass}>De (Compte source)</label>
-                    <select value={data.sourceId} onChange={e => handleSourceChange(e.target.value)} className={inputClass}>
-                        <option value="">Sélectionner</option>
-                        {allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.targetId}>{a.brokerName} - {a.name}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className={labelClass}>Vers (Compte cible)</label>
-                    <select value={data.targetId} onChange={e => setData({ ...data, targetId: e.target.value })} className={inputClass}>
-                        <option value="">Sélectionner</option>
-                        {allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.sourceId}>{a.brokerName} - {a.name}</option>)}
-                    </select>
-                </div>
-            </div>
-            {data.sourceId && (
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 animate-fade-in">
-                    <label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur du compte SOURCE avant transfert</label>
-                    <div className="flex items-center gap-2">
-                        <input type="number" step="0.01" value={data.preValuation} onChange={e => setData({ ...data, preValuation: e.target.value })} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Total du compte source" />
-                        <span className="text-sm font-bold text-gray-500">{currencySymbol}</span>
-                    </div>
-                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Permet de neutraliser l'impact du transfert sur le calcul de performance TWR.</p>
-                </div>
-            )}
-            <div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({ ...data, date: e.target.value })} className={inputClass} /></div>
-            <div><label className={labelClass}>Montant du transfert</label><input type="number" step="0.01" value={data.amount} onChange={e => setData({ ...data, amount: e.target.value })} className={inputClass} /></div>
-            <div className="flex justify-end gap-2 pt-4">
-                <button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button>
-                <button onClick={() => data.amount && data.sourceId && data.targetId && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button>
-            </div>
-        </div>
-    );
-};
+const TransferForm = ({ brokers, onSubmit, onCancel }) => { const [data, setData] = useState({ date: new Date().toISOString().split('T')[0], amount: '', sourceId: '', targetId: '', preValuation: '' }); const allAccounts = brokers.flatMap(b => b.accounts.map(a => ({ ...a, brokerName: b.name, brokerId: b.id }))); const sourceAccount = allAccounts.find(a => a.id == data.sourceId); const currencySymbol = sourceAccount ? (CURRENCIES.find(c => c.code === sourceAccount.currency)?.symbol || '€') : '€'; return (<div className="space-y-4"><div className="grid grid-cols-2 gap-4"><div><label className={labelClass}>De (Compte source)</label><select value={data.sourceId} onChange={e => setData({...data, sourceId: e.target.value})} className={inputClass}><option value="">Sélectionner</option>{allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.targetId}>{a.brokerName} - {a.name}</option>)}</select></div><div><label className={labelClass}>Vers (Compte cible)</label><select value={data.targetId} onChange={e => setData({...data, targetId: e.target.value})} className={inputClass}><option value="">Sélectionner</option>{allAccounts.map(a => <option key={a.id} value={a.id} disabled={a.id === data.sourceId}>{a.brokerName} - {a.name}</option>)}</select></div></div>{data.sourceId && (<div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800 animate-fade-in"><label className="text-xs font-bold text-blue-800 dark:text-blue-300 mb-1 block">Valeur du compte SOURCE avant transfert</label><div className="flex items-center gap-2"><input type="number" step="0.01" value={data.preValuation} onChange={e => setData({...data, preValuation: e.target.value})} className="w-full p-2 border border-blue-300 dark:border-blue-700 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" placeholder="Total du compte source" /><span className="text-sm font-bold text-gray-500">{currencySymbol}</span></div><p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Permet de calculer la part de gains transférée.</p></div>)}<div><label className={labelClass}>Date</label><input type="date" value={data.date} onChange={e => setData({...data, date: e.target.value})} className={inputClass} /></div><div><label className={labelClass}>Montant du transfert</label><input type="number" step="0.01" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className={inputClass} /></div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => data.amount && data.sourceId && data.targetId && onSubmit(data)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button></div></div>); };
 const SnapshotForm = ({ brokerId, accountId, onSubmit, onCancel, currencySymbol, initialData }) => { const [date, setDate] = useState(initialData ? initialData.date : new Date().toISOString().split('T')[0]); const [cats, setCats] = useState(INVESTMENT_CATEGORIES.map(c => { const existing = initialData?.categories?.find(k => k.type === c.value); return { type: c.value, amount: existing ? existing.amount : '' }; })); const total = cats.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0); return (<div className="space-y-4"><div><label className={labelClass}>Date</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputClass} /></div><div className="border-t border-gray-200 dark:border-slate-700 pt-4"><h4 className="text-sm font-bold mb-3 text-gray-900 dark:text-gray-100">Répartition</h4><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">{INVESTMENT_CATEGORIES.map(cat => { const val = cats.find(c => c.type === cat.value)?.amount || ''; const Icon = cat.icon; return (<div key={cat.value} className="flex items-center p-2.5 border border-gray-200 dark:border-slate-600 rounded-lg bg-gray-50 dark:bg-slate-700/50"><Icon className="w-5 h-5 mr-2" style={{color: cat.color}} /><span className="flex-1 text-sm font-medium text-gray-700 dark:text-gray-300">{cat.label}</span><input type="number" placeholder="0" step="0.01" value={val} onChange={e => setCats(cats.map(c => c.type === cat.value ? { ...c, amount: e.target.value } : c))} className="w-24 text-right p-1.5 border border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white outline-none focus:border-blue-500" /></div>); })}</div></div><div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg flex justify-between items-center"><span className="font-bold text-blue-900 dark:text-blue-300">Total</span><span className="font-bold text-2xl text-blue-700 dark:text-blue-400">{total.toLocaleString('fr-FR')} {currencySymbol}</span></div><div className="flex justify-end gap-2 pt-2"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const valid = cats.filter(c => c.amount !== '' && c.amount !== null && parseFloat(c.amount) !== 0).map(c => ({...c, amount: parseFloat(c.amount).toFixed(2)})); if(valid.length) onSubmit(brokerId, accountId, { date, categories: valid, id: initialData?.id }); else alert("Saisissez au moins un montant"); }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">{initialData ? "Modifier" : "Valider"}</button></div></div>); };
 const TargetAllocationForm = ({ currentTargets, onSubmit, onCancel }) => { const [targets, setTargets] = useState(INVESTMENT_CATEGORIES.map(c => ({ ...c, percent: currentTargets[c.value] || 0 }))); const totalPercent = targets.reduce((s, c) => s + parseFloat(c.percent || 0), 0); return (<div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-700 dark:text-gray-300">Total alloué :</span><span className={`font-bold text-lg ${totalPercent === 100 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{totalPercent}%</span></div><div className="max-h-80 overflow-y-auto space-y-2 pr-2">{targets.map(cat => (<div key={cat.value} className="flex items-center justify-between p-2 border border-gray-200 dark:border-slate-600 rounded-lg"><span className="flex items-center text-sm font-medium text-gray-700 dark:text-gray-300"><div className="w-3 h-3 rounded-full mr-2" style={{backgroundColor: cat.color}}></div>{cat.label}</span><div className="flex items-center gap-2"><input type="number" min="0" max="100" value={cat.percent} onChange={e => setTargets(targets.map(t => t.value === cat.value ? { ...t, percent: parseFloat(e.target.value) || 0 } : t))} className="w-16 text-right p-1 border border-gray-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-gray-900 dark:text-white" /><span className="text-gray-500">%</span></div></div>))}</div><div className="flex justify-end gap-2 pt-4"><button onClick={onCancel} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const mapping = {}; targets.forEach(t => { if(t.percent > 0) mapping[t.value] = t.percent; }); onSubmit(mapping); }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Enregistrer</button></div></div>); };
 const PerformanceBadge = ({ current, invested, tri, twr }) => { 
