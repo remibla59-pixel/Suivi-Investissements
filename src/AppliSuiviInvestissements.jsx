@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { PlusCircle, Trash2, Edit2, Wallet, Download, Upload, ArrowDownCircle, ArrowUpCircle, LogOut, Loader2, Save, Moon, Sun, ArrowRightLeft, Percent, RotateCcw, Eye, EyeOff } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, Wallet, Download, Upload, ArrowDownCircle, ArrowUpCircle, LogOut, Loader2, Save, Moon, Sun, ArrowRightLeft, Percent, RotateCcw, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -30,12 +30,14 @@ const firebaseConfig = {
 
 // Initialisation conditionnelle
 let auth, db, provider;
+let firebaseInitError = null;
 try {
     const app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
     provider = new GoogleAuthProvider();
 } catch (e) {
+    firebaseInitError = e;
     console.error("Erreur Firebase: Config manquante", e);
 }
 
@@ -54,7 +56,8 @@ const getTotalByBrokerInEur = (b) => b.accounts.reduce((sum, a) => sum + getAcco
 
 const InvestmentTrackerApp = () => {
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [firebaseError] = useState(() => firebaseInitError);
+  const [authLoading, setAuthLoading] = useState(() => !auth);
   const [dataLoading, setDataLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
@@ -102,6 +105,7 @@ const InvestmentTrackerApp = () => {
   }, []);
 
   useEffect(() => {
+    if (!auth) return () => {};
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         setUser(currentUser);
         if (currentUser) {
@@ -473,6 +477,27 @@ const InvestmentTrackerApp = () => {
     saveUserData(updated, undefined, undefined); showToast('Transfert effectué'); closeModal();
   };
 
+  if (firebaseError) return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4">
+      <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-red-200 dark:border-red-800 max-w-md w-full text-center">
+        <div className="bg-red-100 dark:bg-red-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><AlertCircle className="w-10 h-10 text-red-500 dark:text-red-400" /></div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Configuration Firebase manquante</h1>
+        <p className="text-gray-500 dark:text-gray-400 mb-4">Impossible d'initialiser Firebase. Ajoutez les variables suivantes dans l'onglet « Keys/API keys » puis relancez l'application :</p>
+        <ul className="text-left text-xs font-mono bg-gray-50 dark:bg-slate-700/50 border border-gray-200 dark:border-slate-600 rounded-lg p-3 mb-4 space-y-1 text-gray-700 dark:text-gray-300">
+          <li>VITE_FIREBASE_API_KEY</li>
+          <li>VITE_FIREBASE_AUTH_DOMAIN</li>
+          <li>VITE_FIREBASE_PROJECT_ID</li>
+          <li>VITE_FIREBASE_STORAGE_BUCKET</li>
+          <li>VITE_FIREBASE_MESSAGING_SENDER_ID</li>
+          <li>VITE_FIREBASE_APP_ID</li>
+        </ul>
+        <details className="text-left text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 rounded-lg p-3">
+          <summary className="font-bold cursor-pointer">Détail de l'erreur</summary>
+          <p className="mt-2 break-all">{String(firebaseError.message || firebaseError)}</p>
+        </details>
+      </div>
+    </div>
+  );
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
   if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
 
