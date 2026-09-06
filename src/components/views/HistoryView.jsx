@@ -2,8 +2,8 @@
 // Composant autonome (props brokers/darkMode/privacyMode), extrait du fichier principal (axe 2 de l'audit).
 import { useState, useMemo } from "react";
 import { History, Calendar, TrendingUp } from "lucide-react";
-import { ComposedChart, Bar, BarChart, Line, Cell, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from "recharts";
-import { BlurMoney } from "../ui.jsx";
+import { ComposedChart, Bar, BarChart, Line, Cell, CartesianGrid, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
+import { BlurMoney, ChartTooltip, ChartLegend, axisTickProps, gridStroke } from "../ui.jsx";
 import { processMonthlyStats, calculateTWR, annualizeReturn, formatCompactAxis } from "../../utils/calculs.js";
 
 export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
@@ -111,16 +111,13 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                 </div>
                 <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={waterfallData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                            <XAxis dataKey="name" fontSize={12} stroke="#9CA3AF" />
-                            <YAxis width={70} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v, '€')} />
-                            <Tooltip
-                                contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                formatter={(value, name) => name === 'Socle' ? null : [privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value), name]}
-                            />
+                        <BarChart data={waterfallData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }} barCategoryGap="28%">
+                            <CartesianGrid {...gridStroke(darkMode)} />
+                            <XAxis dataKey="name" tick={{ ...axisTickProps(darkMode), fontWeight: 700 }} axisLine={false} tickLine={false} tickMargin={6} />
+                            <YAxis width={56} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v, '€')} />
+                            <Tooltip cursor={{ fill: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }} content={<ChartTooltip darkMode={darkMode} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} />} />
                             <Bar dataKey="base" name="Socle" stackId="perf" fill="transparent" tooltipType="none" isAnimationActive={false} />
-                            <Bar dataKey="value" name="Montant" stackId="perf" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                            <Bar dataKey="value" name="Montant" stackId="perf" maxBarSize={72} radius={[6, 6, 0, 0]} isAnimationActive={false}>
                                 {waterfallData.map((entry, index) => (<Cell key={`wf-${index}`} fill={entry.fill} />))}
                             </Bar>
                         </BarChart>
@@ -129,27 +126,23 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
             </div>
              )}
              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                <h3 className="font-bold mb-4 text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <h3 className="font-bold text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
+                    <ChartLegend items={[{ name: 'Gain/Perte Net', color: '#10B981' }, { name: 'Rendement', color: '#F59E0B' }]} />
+                </div>
                 <div className="h-80">
     <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={stats}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-            <XAxis dataKey="displayDate" fontSize={12} stroke="#9CA3AF" />
-            <YAxis yAxisId="left" width={70} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v, '€')} />
-            <YAxis yAxisId="right" orientation="right" fontSize={12} stroke="#F59E0B" tickFormatter={v => `${v.toFixed(1)}%`} />
-            <Tooltip
-                contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                formatter={(value, name) => {
-                    if (name === "Rendement") return [`${value.toFixed(2)} %`, name];
-                    return [privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value), name];
-                }}
-            />
-            <Legend />
-            <ReferenceLine y={0} yAxisId="left" stroke="#9CA3AF" />
-            <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" barSize={40}>
-                {stats.map((entry, index) => (<cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}
+        <ComposedChart data={stats} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+            <CartesianGrid {...gridStroke(darkMode)} />
+            <XAxis dataKey="displayDate" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={6} minTickGap={20} />
+            <YAxis yAxisId="left" width={54} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v, '€')} />
+            <YAxis yAxisId="right" orientation="right" width={38} tick={{ ...axisTickProps(darkMode), fill: '#F59E0B' }} axisLine={false} tickLine={false} tickFormatter={v => `${v.toFixed(1)}%`} />
+            <Tooltip cursor={{ fill: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }} content={<ChartTooltip darkMode={darkMode} formatter={(value, entry) => entry.dataKey === 'yield' ? `${Number(value).toFixed(2)} %` : (privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value))} />} />
+            <ReferenceLine y={0} yAxisId="left" stroke={darkMode ? '#475569' : '#CBD5E1'} />
+            <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" barSize={34} radius={[5, 5, 0, 0]}>
+                {stats.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}
             </Bar>
-            <Line yAxisId="right" type="monotone" dataKey="yield" name="Rendement" stroke="#F59E0B" strokeWidth={3} dot={{r: 4, fill: '#F59E0B'}} />
+            <Line yAxisId="right" type="monotone" dataKey="yield" name="Rendement" stroke="#F59E0B" strokeWidth={2.5} dot={false} strokeLinecap="round" activeDot={{ r: 5 }} />
         </ComposedChart>
     </ResponsiveContainer>
 </div>

@@ -2,9 +2,9 @@
 // Objectif patrimonial, indicateurs globaux, évolution et répartitions (extraite du fichier principal, axe 2 de l'audit).
 import { useMemo, useState, useEffect } from "react";
 import { Target, TrendingUp, TrendingDown, PieChart as PieChartIcon, BarChart3, Gauge, ShieldCheck, Activity, AlertTriangle, Loader2 } from "lucide-react";
-import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, Legend, ReferenceLine, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ReferenceLine, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { getNetInvestedUntilDate, processMonthlyStats, calculateSharpeRatio, formatCompactAxis } from "../../utils/calculs.js";
-import { BlurMoney, PerformanceBadge } from "../ui.jsx";
+import { BlurMoney, PerformanceBadge, ChartTooltip, ChartLegend, axisTickProps, gridStroke } from "../ui.jsx";
 import { BENCHMARK_OPTIONS, getBenchmarkApiKey, fetchBenchmarkMonthly } from "../../utils/marketData.js";
 
 export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patrimonyGoal, totalInvestedGlobal, totalNetGainLoss, globalTRI, twr, globalCategoryDistribution, globalAccountTypeDistribution, crossDistributionData, targetAllocation, openModal }) => {
@@ -44,7 +44,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
 
     // --- COMPARAISON BENCHMARK ---
     const benchmarkApiKey = getBenchmarkApiKey();
-    const [benchmarkSymbol, setBenchmarkSymbol] = useState(() => { try { const stored = localStorage.getItem('benchmark_symbol'); return BENCHMARK_OPTIONS.some(o => o.symbol === stored) ? stored : 'SPX'; } catch { return 'SPX'; } });
+    const [benchmarkSymbol, setBenchmarkSymbol] = useState(() => { try { const stored = localStorage.getItem('benchmark_symbol'); return BENCHMARK_OPTIONS.some(o => o.symbol === stored) ? stored : 'SPY'; } catch { return 'SPY'; } });
     const [benchmarkData, setBenchmarkData] = useState(null);
     const [benchmarkLoading, setBenchmarkLoading] = useState(() => Boolean(getBenchmarkApiKey()));
     const [benchmarkError, setBenchmarkError] = useState(null);
@@ -60,30 +60,40 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
     }, [benchmarkSymbol, benchmarkApiKey, benchmarkRetry]);
 
     const benchmarkLabel = BENCHMARK_OPTIONS.find(o => o.symbol === benchmarkSymbol)?.label || benchmarkSymbol;
+    const benchmarkShort = benchmarkLabel.replace(/\s*\([^)]*\)\s*$/, '');
 
-    // Série comparée : portefeuille vs indice, tous deux en base 100 au premier mois commun
+    // Série comparée : performance du portefeuille (TWR, nette des flux) vs indice,
+    // tous deux ramenés à 100 au premier mois commun.
     const benchmarkChart = useMemo(() => {
-        if (!benchmarkData || !benchmarkData.length || evolution.length < 2) return null;
+        if (!benchmarkData || !benchmarkData.length) return null;
+        const stats = processMonthlyStats(brokers);
+        if (stats.length < 2) return null;
         const benchByMonth = new Map(benchmarkData.map(p => [p.date.slice(0, 7), p.close]));
-        let startNorm = null;
+        const statsByMonth = new Map(stats.map(s => [s.month, s]));
+        const months = [...statsByMonth.keys()].filter(m => benchByMonth.has(m));
+        if (months.length < 2) return null;
+
+        let cum = 1;
+        let startCum = null;
+        const startBench = benchByMonth.get(months[0]);
         const points = [];
-        evolution.forEach(ev => {
-            const benchVal = benchByMonth.get(ev.monthKey);
-            if (benchVal === undefined) return;
-            if (startNorm === null) startNorm = { port: ev.valeur, bench: benchVal };
-            if (startNorm.port > 0 && startNorm.bench > 0) {
-                points.push({
-                    month: ev.monthKey,
-                    label: ev.date,
-                    portefeuille: (ev.valeur / startNorm.port) * 100,
-                    benchmark: (benchVal / startNorm.bench) * 100,
-                });
-            }
+        months.forEach(month => {
+            const stat = statsByMonth.get(month);
+            const r = 1 + parseFloat(stat.yield) / 100;
+            if (!isFinite(r) || r <= 0) return;
+            cum *= r;
+            if (startCum === null) startCum = cum;
+            points.push({
+                month,
+                label: stat.displayDate,
+                portefeuille: (cum / startCum) * 100,
+                benchmark: (benchByMonth.get(month) / startBench) * 100,
+            });
         });
         if (points.length < 2) return null;
         const last = points[points.length - 1];
-        return { points, outperformance: last.portefeuille - last.benchmark };
-    }, [benchmarkData, evolution]);
+        return { points, outperformance: last.portefeuille - last.benchmark, portfolioPct: last.portefeuille - 100, benchmarkPct: last.benchmark - 100 };
+    }, [benchmarkData, brokers]);
 
     // --- ALERTES DE RÉÉQUILIBRAGE (écart > 5 points de % vs allocation cible) ---
     const rebalanceAlerts = useMemo(() => {
@@ -122,6 +132,21 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
 
     // Données du donut (catégories à valeur positive)
     const donutData = useMemo(() => globalCategoryDistribution.filter(d => d.value > 0), [globalCategoryDistribution]);
+
+    // Étiquettes à l'intérieur de la couronne : nom + % pour les parts lisibles
+    const renderDonutLabel = (props) => {
+        const { cx, cy, midAngle, innerRadius, outerRadius, percent, payload } = props;
+        if (!payload || (percent || 0) * 100 < 5) return null;
+        const RADIAN = Math.PI / 180;
+        const radius = innerRadius + (outerRadius - innerRadius) * 0.62;
+        const x = cx + radius * Math.cos(-midAngle * RADIAN);
+        const y = cy + radius * Math.sin(-midAngle * RADIAN);
+        return (
+            <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={10.5} fontWeight={700} fill={darkMode ? '#E2E8F0' : '#334155'}>
+                {payload.label} · {(percent * 100).toFixed(0)}%
+            </text>
+        );
+    };
 
     return (
         <div className="space-y-8 animate-fade-in w-full">
@@ -221,21 +246,24 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg">
-                    <h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+                        <h3 className="font-bold flex items-center gap-2 text-lg text-gray-800 dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3>
+                        <ChartLegend items={[{ name: 'Valeur Totale', color: '#10B981' }, { name: 'Capital Investi', color: '#64748B' }]} />
+                    </div>
                     <div className="h-72">
                         {evolution.length > 1 ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart data={evolution}>
                                     <defs>
-                                        <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.1} /><stop offset="95%" stopColor="#10B981" stopOpacity={0} /></linearGradient>
-                                        <linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#64748B" stopOpacity={0.1} /><stop offset="95%" stopColor="#64748B" stopOpacity={0} /></linearGradient>
+                                        <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10B981" stopOpacity={0.22} /><stop offset="100%" stopColor="#10B981" stopOpacity={0} /></linearGradient>
+                                        <linearGradient id="colorInv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#64748B" stopOpacity={0.12} /><stop offset="100%" stopColor="#64748B" stopOpacity={0} /></linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} />
-                                    <XAxis dataKey="date" fontSize={12} stroke="#9CA3AF" />
-                                    <YAxis width={70} domain={['dataMin', 'dataMax']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v)} />
-                                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000' }} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} />
-                                    <Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorVal)" />
-                                    <Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" />
+                                    <CartesianGrid {...gridStroke(darkMode)} />
+                                    <XAxis dataKey="date" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={6} minTickGap={24} />
+                                    <YAxis width={56} domain={['dataMin', 'dataMax']} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v)} />
+                                    <Tooltip content={<ChartTooltip darkMode={darkMode} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} />} />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="valeur" name="Valeur Totale" stroke="#10B981" strokeWidth={2.25} fillOpacity={1} fill="url(#colorVal)" activeDot={{ r: 4 }} />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="investi" name="Capital Investi" stroke="#64748B" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorInv)" activeDot={{ r: 4 }} />
                                 </AreaChart>
                             </ResponsiveContainer>
                         ) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Ajoutez des valorisations pour voir le graphique</div>}
@@ -324,13 +352,10 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                         <div className="relative h-64 w-64 flex-shrink-0">
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
-                                    <Pie data={donutData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={62} outerRadius={95} paddingAngle={2} isAnimationActive={false}>
-                                        {donutData.map((entry, index) => (<Cell key={`donut-${index}`} fill={entry.color} />))}
+                                    <Pie data={donutData} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius={60} outerRadius={94} paddingAngle={2.5} cornerRadius={5} label={renderDonutLabel} labelLine={false} isAnimationActive={false}>
+                                        {donutData.map((entry, index) => (<Cell key={`donut-${index}`} fill={entry.color} stroke="none" />))}
                                     </Pie>
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', padding: '12px' }}
-                                        formatter={(value) => [privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)]}
-                                    />
+                                    <Tooltip content={<ChartTooltip darkMode={darkMode} formatter={(value) => privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)} />} />
                                 </PieChart>
                             </ResponsiveContainer>
                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -338,11 +363,11 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                                 <span className="text-lg font-bold text-gray-900 dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></span>
                             </div>
                         </div>
-                        <div className="w-full flex-1 space-y-2.5">
+                        <div className="w-full flex-1 space-y-2.5 min-w-0">
                             {donutData.map(d => (
-                                <div key={d.name} className="flex items-center justify-between text-sm">
-                                    <span className="flex items-center text-gray-600 dark:text-gray-300 font-medium truncate"><div className="w-2.5 h-2.5 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: d.color }}></div>{d.name}</span>
-                                    <span className="font-bold text-gray-800 dark:text-white"><BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span></span>
+                                <div key={d.type} className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="flex items-center text-gray-600 dark:text-gray-300 font-medium truncate min-w-0"><div className="w-2.5 h-2.5 rounded-full flex-shrink-0 mr-2" style={{ backgroundColor: d.color }}></div>{d.label}</span>
+                                    <span className="font-bold text-gray-800 dark:text-white whitespace-nowrap"><BlurMoney amount={d.value} privacyMode={privacyMode} /> <span className="text-gray-400 font-normal">({d.percentage}%)</span></span>
                                 </div>
                             ))}
                         </div>
@@ -379,27 +404,36 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                     </div>
                 ) : benchmarkChart ? (
                     <>
-                        <div className="flex flex-wrap items-center gap-3 mb-4">
-                            <span className={`text-sm font-bold px-3 py-1.5 rounded-lg ${benchmarkChart.outperformance >= 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                                {benchmarkChart.outperformance >= 0 ? '+' : ''}{benchmarkChart.outperformance.toFixed(1)} pts vs {benchmarkLabel}
+                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <span className="inline-flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/50">
+                                <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>Portefeuille
+                                <span className="tabular-nums">{benchmarkChart.portfolioPct >= 0 ? '+' : ''}{benchmarkChart.portfolioPct.toFixed(1)} %</span>
                             </span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">Indices base 100 au premier mois commun ({benchmarkChart.points[0].label})</span>
+                            <span className="inline-flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-300 border border-violet-200/60 dark:border-violet-800/50">
+                                <span className="w-2 h-2 rounded-full bg-[#8B5CF6]"></span>{benchmarkShort}
+                                <span className="tabular-nums">{benchmarkChart.benchmarkPct >= 0 ? '+' : ''}{benchmarkChart.benchmarkPct.toFixed(1)} %</span>
+                            </span>
+                            <span className={`text-xs font-bold px-2.5 py-1.5 rounded-lg ${benchmarkChart.outperformance >= 0 ? 'bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-gray-200' : 'bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-gray-200'}`} title="Écart de performance entre le portefeuille et l'indice">
+                                Écart {benchmarkChart.outperformance >= 0 ? '+' : ''}{benchmarkChart.outperformance.toFixed(1)} pts
+                            </span>
                         </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Performance nette des flux vs indice — base 100 au premier mois commun ({benchmarkChart.points[0].label})</p>
+                        <ChartLegend className="mb-3" items={[{ name: 'Portefeuille (TWR)', color: '#10B981' }, { name: benchmarkShort, color: '#8B5CF6' }]} />
                         <div className="h-72">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={benchmarkChart.points} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} />
-                                    <XAxis dataKey="label" fontSize={12} stroke="#9CA3AF" />
-                                    <YAxis width={70} domain={['auto', 'auto']} fontSize={12} stroke="#9CA3AF" tickFormatter={v => formatCompactAxis(v)} />
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', padding: '12px' }}
-                                        formatter={(value, name) => [`${Number(value).toFixed(1)}`, name === 'portefeuille' ? 'Portefeuille (base 100)' : `${benchmarkLabel} (base 100)`]}
-                                    />
-                                    <Legend />
-                                    <ReferenceLine y={100} stroke="#9CA3AF" strokeDasharray="3 3" />
-                                    <Line isAnimationActive={false} type="monotone" dataKey="portefeuille" name="Portefeuille" stroke="#10B981" strokeWidth={3} dot={false} activeDot={{ r: 5 }} />
-                                    <Line isAnimationActive={false} type="monotone" dataKey="benchmark" name={benchmarkLabel} stroke="#8B5CF6" strokeWidth={2} strokeDasharray="6 3" dot={false} />
-                                </LineChart>
+                                <AreaChart data={benchmarkChart.points} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                                    <defs>
+                                        <linearGradient id="gradPort" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10B981" stopOpacity={0.18} /><stop offset="100%" stopColor="#10B981" stopOpacity={0} /></linearGradient>
+                                        <linearGradient id="gradBench" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.14} /><stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} /></linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="0" {...gridStroke(darkMode)} />
+                                    <XAxis dataKey="label" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={6} minTickGap={24} />
+                                    <YAxis width={56} domain={[(min) => Math.max(0, Math.floor(Math.min(min, 100) / 10) * 10 - 5), (max) => Math.ceil(Math.max(max, 100) / 10) * 10 + 5]} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => `${Math.round(v)}`} />
+                                    <Tooltip content={<ChartTooltip darkMode={darkMode} formatter={(value) => `${Number(value).toFixed(1)}`} />} />
+                                    <ReferenceLine y={100} stroke={darkMode ? '#475569' : '#CBD5E1'} strokeDasharray="4 4" label={{ value: 'Base 100', position: 'insideTopLeft', fontSize: 10, fill: darkMode ? '#64748B' : '#94A3B8' }} />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="portefeuille" name="Portefeuille" stroke="#10B981" strokeWidth={2.5} fill="url(#gradPort)" fillOpacity={1} dot={false} activeDot={{ r: 5 }} />
+                                    <Area isAnimationActive={false} type="monotone" dataKey="benchmark" name={benchmarkShort} stroke="#8B5CF6" strokeWidth={2} strokeDasharray="6 3" fill="url(#gradBench)" fillOpacity={1} dot={false} />
+                                </AreaChart>
                             </ResponsiveContainer>
                         </div>
                     </>
@@ -413,33 +447,31 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                 <div className="h-80">
                     {crossDistributionData.length > 0 ? (
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={crossDistributionData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f0f0f0'} />
-                                <XAxis dataKey="name" fontSize={12} stroke="#9CA3AF" />
-                                <YAxis width={70} fontSize={12} stroke="#9CA3AF" tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v)} />
+                            <BarChart data={crossDistributionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }} barCategoryGap="22%">
+                                <CartesianGrid {...gridStroke(darkMode)} />
+                                <XAxis dataKey="name" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={8} interval={0} angle={-18} height={58} />
+                                <YAxis width={56} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v)} />
                                 <Tooltip
-                                    cursor={{fill: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}}
-                                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: darkMode ? '#1e293b' : '#fff', color: darkMode ? '#fff' : '#000', padding: '12px' }}
-                                    formatter={(value, name, props) => {
-                                        if (name === "total" || privacyMode) return null;
-                                        const accountName = accountNames[name] || name;
-                                        const percentage = ((value / props.payload.total) * 100).toFixed(1);
-                                        return [
-                                            <span className="flex flex-col">
-                                                <span className="font-bold">{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)}</span>
-                                                <span className="text-[10px] opacity-70">{percentage}% de la classe d'actif</span>
-                                            </span>,
-                                            accountName
-                                        ];
-                                    }}
+                                    cursor={{ fill: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }}
+                                    content={<ChartTooltip darkMode={darkMode} formatter={(value, entry) => {
+                                        if (entry.name === 'total' || privacyMode) return null;
+                                        const percentage = entry.payload?.total ? ((value / entry.payload.total) * 100).toFixed(1) : null;
+                                        return (
+                                            <span className="flex flex-col items-end">
+                                                <span>{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value)}</span>
+                                                {percentage !== null && <span className="text-[10px] opacity-70">{percentage}% de la classe d'actif</span>}
+                                            </span>
+                                        );
+                                    }} />}
                                 />
-                                {accountIds.map((id) => (
-                                    <Bar 
-                                        key={id} 
-                                        dataKey={id} 
-                                        stackId="a" 
-                                        fill={accountColors[id]} 
-                                        radius={[0, 0, 0, 0]}
+                                {accountIds.map((id, i) => (
+                                    <Bar
+                                        key={id}
+                                        dataKey={id}
+                                        name={accountNames[id]}
+                                        stackId="a"
+                                        fill={accountColors[id]}
+                                        radius={i === accountIds.length - 1 ? [6, 6, 0, 0] : [0, 0, 0, 0]}
                                         isAnimationActive={false}
                                     />
                                 ))}

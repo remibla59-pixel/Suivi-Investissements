@@ -84,15 +84,20 @@ export const calculateRollingYearPerformance = (brokers) => {
 };
 
 // Calcul du TWR (Taux de Rendement Pondéré par le Temps) par chaînage de rendements mensuels
-// Neutralise l'effet des flux : performance pure de la gestion
+// Neutralise l'effet des flux : performance pure de la gestion.
+// Les mois incohérents (rendement <= -100%, donnée incomplète) sont ignorés
+// plutôt que d'invalider toute la série.
 export const calculateTWR = (monthlyYields) => {
     if (!monthlyYields || monthlyYields.length === 0) return null;
     let product = 1;
+    let count = 0;
     for (const y of monthlyYields) {
         const r = 1 + parseFloat(y) / 100;
-        if (!isFinite(r) || r <= 0) return null;
+        if (!isFinite(r) || r <= 0) continue;
         product *= r;
+        count++;
     }
+    if (count === 0) return null;
     return (product - 1) * 100;
 };
 
@@ -167,6 +172,17 @@ export const formatCompactAxis = (v, suffix = '') => {
 };
 
 // --- HELPER AGRÉGATION MENSUELLE ---
+// Construit la série mensuelle du portefeuille : valeur, flux, investi, variation,
+// performance (€) et rendement (%) de chaque mois.
+//
+// Le rendement est calculé par COMPTE puis agrégé (Dietz modifié), ce qui évite
+// les distorsions quand les comptes démarrent à des dates différentes :
+//  - un compte sans valorisation ne contribue pas au rendement (ses flux ne sont
+//    pas visibles dans la série de valeurs) ;
+//  - le mois où un compte apparaît pour la première fois, les mouvements ANTÉRIEURS
+//    qui ont créé sa valeur sont soustraits de la performance et ajoutés à la base
+//    (sinon des dépôts anciens seraient comptés comme une performance énorme et
+//    fausseraient le TWR et la comparaison benchmark).
 export const processMonthlyStats = (brokers) => {
     let minDateMs = Date.now();
     let hasData = false;
@@ -196,6 +212,12 @@ export const processMonthlyStats = (brokers) => {
     const stats = [];
     let currentDate = new Date(startDate);
 
+    // État par compte pour le calcul du rendement
+    const prevValueByAccount = new Map();  // dernière valeur connue (début de mois)
+    const appearedByAccount = new Map();   // le compte a déjà eu une valorisation
+
+    let prevTotalValue = null;
+
     while (currentDate <= endDate) {
         const year = currentDate.getFullYear();
         const month = String(currentDate.getMonth() + 1).padStart(2, '0');
@@ -207,26 +229,56 @@ export const processMonthlyStats = (brokers) => {
         let totalValue = 0;
         let totalFlows = 0;
         let totalInvested = 0;
+        let perfAmount = 0; // performance € (hors flux et hors apparitions)
+        let perfBase = 0;   // base moyenne (dénominateur du rendement)
 
         brokers.forEach(broker => {
             broker.accounts.forEach(account => {
                 const rate = parseFloat(account.exchangeRate || 1);
+                const movements = account.movements || [];
 
                 const relevantSnapshots = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
                 const lastSnap = relevantSnapshots.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+                const endVal = lastSnap ? parseFloat(lastSnap.amount) : 0;
+                const startVal = prevValueByAccount.get(account.id) || 0;
 
-                if (lastSnap) {
-                    totalValue += parseFloat(lastSnap.amount) * rate;
-                }
-
-                const monthMoves = (account.movements || []).filter(m => m.date.startsWith(monthStr));
+                const monthMoves = movements.filter(m => m.date.startsWith(monthStr));
+                let monthFlow = 0;
                 monthMoves.forEach(m => {
-                    const amount = parseFloat(m.amount) * rate;
-                    if (m.type === 'deposit') totalFlows += amount;
-                    else if (m.type === 'withdrawal') totalFlows -= amount;
+                    const amount = parseFloat(m.amount);
+                    if (m.type === 'deposit') monthFlow += amount;
+                    else if (m.type === 'withdrawal') monthFlow -= amount;
                 });
 
-                totalInvested += getNetInvestedUntilDate(account.movements || [], endOfMonthStr) * rate;
+                // Apparition du compte : les mouvements antérieurs ont créé cette
+                // valeur mais n'ont pas été comptés dans un mois de flux valorisé.
+                let appearanceFlow = 0;
+                if (startVal === 0 && endVal > 0 && !appearedByAccount.get(account.id)) {
+                    appearanceFlow = movements
+                        .filter(m => m.date < `${monthStr}-01`)
+                        .reduce((sum, m) => {
+                            const amount = parseFloat(m.amount);
+                            if (m.type === 'deposit') return sum + amount;
+                            if (m.type === 'withdrawal') return sum - amount;
+                            return sum;
+                        }, 0);
+                }
+
+                if (lastSnap) appearedByAccount.set(account.id, true);
+                prevValueByAccount.set(account.id, endVal);
+
+                totalValue += endVal * rate;
+                totalFlows += monthFlow * rate;
+                totalInvested += getNetInvestedUntilDate(movements, endOfMonthStr) * rate;
+
+                const accountBase = startVal + monthFlow * 0.5 + appearanceFlow;
+                // Contribution au rendement uniquement si le compte a une valorisation
+                // connue (sinon ses flux ne sont pas visibles dans la série de valeurs)
+                // et une base de calcul positive.
+                if (lastSnap && accountBase > 0) {
+                    perfAmount += (endVal - startVal - monthFlow - appearanceFlow) * rate;
+                    perfBase += accountBase * rate;
+                }
             });
         });
 
@@ -235,37 +287,15 @@ export const processMonthlyStats = (brokers) => {
             displayDate: currentDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
             value: totalValue,
             flow: totalFlows,
-            invested: totalInvested
+            invested: totalInvested,
+            variation: prevTotalValue !== null ? totalValue - prevTotalValue : totalValue,
+            performance: totalValue - (prevTotalValue !== null ? prevTotalValue : 0) - totalFlows,
+            yield: perfBase > 0 ? (perfAmount / perfBase) * 100 : 0
         });
 
+        prevTotalValue = totalValue;
         currentDate.setMonth(currentDate.getMonth() + 1);
     }
 
-    return stats.map((stat, i) => {
-        if (i === 0) {
-            const performance = stat.value - stat.flow;
-            let denominator = stat.flow * 0.5;
-            if (denominator === 0) denominator = stat.value;
-
-            return {
-                ...stat,
-                variation: stat.value,
-                performance: performance,
-                yield: (denominator > 0) ? (performance / denominator) * 100 : 0
-            };
-        }
-
-        const prev = stats[i - 1];
-        const variation = stat.value - prev.value;
-        const performance = variation - stat.flow;
-
-        let denominator = prev.value + (stat.flow * 0.5);
-
-        if (Math.abs(denominator) < 1) denominator = stat.flow * 0.5;
-        if (denominator === 0) denominator = 1;
-
-        const yieldPct = (performance / denominator) * 100;
-
-        return { ...stat, variation, performance, yield: yieldPct };
-    });
+    return stats;
 };

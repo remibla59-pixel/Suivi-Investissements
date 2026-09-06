@@ -32,5 +32,57 @@ export const Modal = ({ isOpen, onClose, title, children }) => {
 
 export const PerformanceBadge = ({ current, invested, tri, twr }) => { if (!invested || parseFloat(invested) === 0) return null; const perf = ((parseFloat(current) - parseFloat(invested)) / parseFloat(invested)) * 100; const isPositive = perf >= 0; return (<div className="flex flex-wrap items-center gap-2"><div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md ${isPositive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>{isPositive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}{perf > 0 ? '+' : ''}{perf.toFixed(1)}%</div>{tri !== null && (<div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`} title="Taux de Rentabilité Interne (Performance annualisée)"><Activity className="w-3 h-3 mr-1" />TRI: {tri > 0 ? '+' : ''}{tri.toFixed(1)}%/an</div>)}{twr !== null && (<div className={`flex items-center text-xs font-bold px-2 py-1 rounded-md bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400`} title="Taux de Rendement Pondéré par le Temps (annualisé, neutralise l'effet des flux)"><Activity className="w-3 h-3 mr-1" />TWR: {twr > 0 ? '+' : ''}{twr.toFixed(1)}%/an</div>)}</div>); };
 
+// --- GRAPHIQUES (Recharts) : tooltip, légende et réglages d'axes partagés, cohérents clair/sombre ---
+
+// Réglages communs des axes : graduations discrètes, sans lignes d'axes
+// (à étaler sur chaque XAxis/YAxis).
+export const axisTickProps = (darkMode) => ({
+    fill: darkMode ? '#64748B' : '#94A3B8',
+    fontSize: 11,
+    fontWeight: 500
+});
+
+// Grille de fond très discrète (lignes horizontales uniquement).
+export const gridStroke = (darkMode) => ({
+    stroke: darkMode ? 'rgba(148,163,184,0.12)' : 'rgba(100,116,139,0.10)',
+    vertical: false
+});
+
+export const ChartTooltip = ({ active, payload, label, darkMode = false, formatter, extra }) => {
+    if (!active || !payload || !payload.length) return null;
+    const fmt = formatter || ((v) => (typeof v === 'number' ? v.toLocaleString('fr-FR') : String(v)));
+    const rows = payload.filter(e => e.tooltipType !== 'none' && e.name !== 'Socle');
+    if (!rows.length) return null;
+    const title = label !== undefined && label !== null && label !== '' ? String(label) : null;
+    return (
+        <div className={`rounded-xl px-3.5 py-2.5 shadow-xl border backdrop-blur-sm text-xs min-w-[150px] ${darkMode ? 'bg-slate-900/95 border-slate-700 text-white' : 'bg-white/95 border-gray-200/70 text-gray-900'}`}>
+            {title && <div className={`font-bold mb-1.5 pb-1.5 border-b text-[11px] uppercase tracking-wide ${darkMode ? 'border-slate-700 text-slate-400' : 'border-gray-100 text-gray-400'}`}>{title}</div>}
+            <div className="space-y-1.5">
+                {rows.map((entry, i) => (
+                    <div key={i} className="flex items-center justify-between gap-6">
+                        <span className="flex items-center gap-2 font-medium opacity-90">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color || entry.stroke || entry.fill }} />
+                            {entry.name}
+                        </span>
+                        <span className="font-bold tabular-nums">{fmt(entry.value, entry)}</span>
+                    </div>
+                ))}
+            </div>
+            {extra && <div className={`mt-1.5 pt-1.5 border-t ${darkMode ? 'border-slate-700' : 'border-gray-100'}`}>{extra}</div>}
+        </div>
+    );
+};
+
+export const ChartLegend = ({ items, className = "" }) => (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 ${className}`}>
+        {items.map(item => (
+            <span key={item.name} className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                {item.name}
+            </span>
+        ))}
+    </div>
+);
+
 export const inputClass = "w-full border border-gray-300 dark:border-slate-600 p-2.5 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-colors";
 export const labelClass = "block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1";
