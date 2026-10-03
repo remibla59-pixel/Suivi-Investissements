@@ -3,7 +3,8 @@
 import { useMemo, useState, useEffect } from "react";
 import { Target, TrendingUp, TrendingDown, PieChart as PieChartIcon, BarChart3, Gauge, ShieldCheck, Activity, AlertTriangle, Loader2 } from "lucide-react";
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ReferenceLine, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import { getNetInvestedUntilDate, processMonthlyStats, calculateSharpeRatio, formatCompactAxis } from "../../utils/calculs.js";
+import { getNetInvestedUntilDate, processMonthlyStats, calculateSharpeRatio, formatCompactAxis, isAccountClosedAt, processAllocationHistory } from "../../utils/calculs.js";
+import { INVESTMENT_CATEGORIES } from "../../utils/constantes.js";
 import { BlurMoney, PerformanceBadge, ChartTooltip, ChartLegend, axisTickProps, gridStroke } from "../ui.jsx";
 import { BENCHMARK_OPTIONS, getBenchmarkApiKey, fetchBenchmarkMonthly } from "../../utils/marketData.js";
 
@@ -12,6 +13,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
     const evolution = allDates.map(date => {
         const totalAtDate = brokers.reduce((sum, broker) => {
             return sum + broker.accounts.reduce((accSum, acc) => {
+                if (isAccountClosedAt(acc, date)) return accSum;
                 const relevantSnap = acc.snapshots?.filter(s => s.date <= date).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
                 const amount = relevantSnap ? parseFloat(relevantSnap.amount) : 0;
                 const rate = parseFloat(acc.exchangeRate || 1);
@@ -20,6 +22,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
         }, 0);
         const investedAtDate = brokers.reduce((sum, broker) => {
             return sum + broker.accounts.reduce((accSum, acc) => {
+                if (isAccountClosedAt(acc, date)) return accSum;
                 const investedTotal = getNetInvestedUntilDate(acc.movements || [], date);
                 return accSum + (investedTotal * parseFloat(acc.exchangeRate || 1));
             }, 0);
@@ -49,6 +52,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
     const [benchmarkLoading, setBenchmarkLoading] = useState(() => Boolean(getBenchmarkApiKey()));
     const [benchmarkError, setBenchmarkError] = useState(null);
     const [benchmarkRetry, setBenchmarkRetry] = useState(0);
+    const [benchmarkYear, setBenchmarkYear] = useState('all');
 
     useEffect(() => {
         let cancelled = false;
@@ -63,37 +67,94 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
     const benchmarkShort = benchmarkLabel.replace(/\s*\([^)]*\)\s*$/, '');
 
     // Série comparée : performance du portefeuille (TWR, nette des flux) vs indice,
-    // tous deux ramenés à 100 au premier mois commun.
+    // ramenés à 100 au début de la fenêtre affichée — toute la période, ou une année
+    // au choix. Quand la clôture du mois précédant le premier point est connue
+    // (décembre de l'année d'avant pour une vue annuelle), la base 100 est placée à
+    // la fin de ce mois : les deux courbes mesurent alors la performance réelle de la
+    // fenêtre, y compris son premier mois.
     const benchmarkChart = useMemo(() => {
         if (!benchmarkData || !benchmarkData.length) return null;
         const stats = processMonthlyStats(brokers);
         if (stats.length < 2) return null;
         const benchByMonth = new Map(benchmarkData.map(p => [p.date.slice(0, 7), p.close]));
         const statsByMonth = new Map(stats.map(s => [s.month, s]));
-        const months = [...statsByMonth.keys()].filter(m => benchByMonth.has(m));
-        if (months.length < 2) return null;
+        const allMonths = [...statsByMonth.keys()].filter(m => benchByMonth.has(m)).sort();
+        if (allMonths.length < 2) return null;
+
+        // Années proposées : celles qui ont assez de mois pour tracer une courbe
+        // (l'année en cours est toujours proposée).
+        const byYear = new Map();
+        allMonths.forEach(m => byYear.set(m.slice(0, 4), (byYear.get(m.slice(0, 4)) || 0) + 1));
+        const currentYear = String(new Date().getFullYear());
+        const years = [...byYear.keys()].filter(y => byYear.get(y) >= 2 || y === currentYear);
+
+        const activeYear = benchmarkYear !== 'all' && years.includes(benchmarkYear) ? benchmarkYear : 'all';
+        const months = activeYear === 'all' ? allMonths : allMonths.filter(m => m.startsWith(activeYear));
+        if (months.length < 2) return { years, points: null, activeYear };
+
+        const firstMonth = months[0];
+        const isJanStart = firstMonth.slice(5) === '01';
+        // Mois qui porte la base 100 : pour une vue annuelle démarrant en janvier,
+        // c'est la clôture de décembre de l'année précédente (début d'année) ; sinon,
+        // le mois précédant le premier point commun quand sa clôture est connue ; en
+        // dernier recours, le premier point commun lui-même.
+        const prevMonth = isJanStart
+            ? `${parseInt(firstMonth.slice(0, 4), 10) - 1}-12`
+            : `${firstMonth.slice(0, 4)}-${String(parseInt(firstMonth.slice(5), 10) - 1).padStart(2, '0')}`;
+        const benchHasPrev = benchByMonth.has(prevMonth);
+        const baseMonth = benchHasPrev ? prevMonth : firstMonth;
+        const baseBench = benchByMonth.get(baseMonth);
+
+        const shortMonths = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+        const fmtShort = m => `${shortMonths[parseInt(m.slice(5), 10) - 1]} ${String(parseInt(m.slice(0, 4), 10) % 100).padStart(2, '0')}`;
+        const baseLabel = fmtShort(baseMonth);
+
+        // Vue annuelle démarrant en janvier : on affiche un point « base » à 100 à la
+        // fin de décembre de l'année précédente, pour que la courbe parte exactement
+        // du début d'année (base 100).
+        const prependBase = activeYear !== 'all' && isJanStart && benchHasPrev;
+        const points = prependBase
+            ? [{ month: prevMonth, label: fmtShort(prevMonth), portefeuille: 100, benchmark: 100, base: true }]
+            : [];
 
         let cum = 1;
-        let startCum = null;
-        const startBench = benchByMonth.get(months[0]);
-        const points = [];
-        months.forEach(month => {
+        months.forEach((month, idx) => {
             const stat = statsByMonth.get(month);
+            if (!stat) return;
             const r = 1 + parseFloat(stat.yield) / 100;
             if (!isFinite(r) || r <= 0) return;
-            cum *= r;
-            if (startCum === null) startCum = cum;
+            // Si la base est la fin du mois précédent, le 1er mois de la fenêtre est
+            // mesuré ; sinon les deux courbes partent exactement de 100 à ce point.
+            if (idx > 0 || baseMonth !== firstMonth) cum *= r;
             points.push({
                 month,
                 label: stat.displayDate,
-                portefeuille: (cum / startCum) * 100,
-                benchmark: (benchByMonth.get(month) / startBench) * 100,
+                portefeuille: cum * 100,
+                benchmark: (benchByMonth.get(month) / baseBench) * 100,
             });
         });
-        if (points.length < 2) return null;
+        if (points.length < 2) return { years, points: null, activeYear };
+
         const last = points[points.length - 1];
-        return { points, outperformance: last.portefeuille - last.benchmark, portfolioPct: last.portefeuille - 100, benchmarkPct: last.benchmark - 100 };
-    }, [benchmarkData, brokers]);
+        const windowDesc = activeYear === 'all'
+            ? (baseMonth === firstMonth
+                ? `Période complète — base 100 au premier mois commun (${points[0].label}).`
+                : `Période complète — base 100 fin ${baseLabel}, juste avant le premier mois commun (${points[0].label}).`)
+            : (prependBase
+                ? `Année ${activeYear} — base 100 au début de l'année (fin ${baseLabel}).`
+                : (baseMonth === firstMonth
+                    ? `Année ${activeYear} — base 100 au premier mois disponible (${points[0].label}).`
+                    : `Année ${activeYear} — base 100 fin ${baseLabel}.`));
+        return {
+            points,
+            years,
+            activeYear,
+            windowDesc,
+            outperformance: last.portefeuille - last.benchmark,
+            portfolioPct: last.portefeuille - 100,
+            benchmarkPct: last.benchmark - 100,
+        };
+    }, [benchmarkData, brokers, benchmarkYear]);
 
     // --- ALERTES DE RÉÉQUILIBRAGE (écart > 5 points de % vs allocation cible) ---
     const rebalanceAlerts = useMemo(() => {
@@ -129,6 +190,25 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
         const volatility = Math.sqrt(variance) * Math.sqrt(12);
         return { maxDrawdown: maxDrawdown * 100, volatility: volatility * 100, sharpe: calculateSharpeRatio(returns) };
     }, [brokers]);
+
+    // --- ALLOCATION DANS LE TEMPS ---
+    // Parts mensuelles par classe d'actifs, calculées à chaque fin de mois d'après
+    // les valorisations (les comptes clôturés sortent de la répartition).
+    const allocationHistory = useMemo(() => processAllocationHistory(brokers), [brokers]);
+    const allocationChart = useMemo(() => {
+        if (allocationHistory.length < 2) return null;
+        const presentTypes = new Set();
+        allocationHistory.forEach(p => Object.entries(p.values).forEach(([t, v]) => { if (v > 0) presentTypes.add(t); }));
+        const cats = INVESTMENT_CATEGORIES.filter(c => presentTypes.has(c.value));
+        if (!cats.length) return null;
+        const points = allocationHistory.map(p => {
+            const posTotal = cats.reduce((s, c) => s + Math.max(0, p.values[c.value] || 0), 0);
+            const row = { month: p.month, label: p.displayDate };
+            cats.forEach(c => { row[c.value] = posTotal > 0 ? (Math.max(0, p.values[c.value] || 0) / posTotal) * 100 : 0; });
+            return row;
+        });
+        return { cats, points };
+    }, [allocationHistory]);
 
     // Données du donut (catégories à valeur positive)
     const donutData = useMemo(() => globalCategoryDistribution.filter(d => d.value > 0), [globalCategoryDistribution]);
@@ -376,12 +456,42 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
             </div>
 
             <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><PieChartIcon className="w-5 h-5 text-emerald-500" /> Allocation dans le temps</h3>
+                    {allocationChart && <ChartLegend items={allocationChart.cats.map(c => ({ name: c.label, color: c.color }))} />}
+                </div>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Part de chaque classe d'actifs à chaque fin de mois, d'après vos valorisations. Les comptes clôturés sortent de la répartition à leur clôture.</p>
+                <div className="h-80">
+                    {allocationChart ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={allocationChart.points} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid {...gridStroke(darkMode)} />
+                                <XAxis dataKey="label" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={6} minTickGap={24} />
+                                <YAxis width={48} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
+                                <Tooltip content={<ChartTooltip darkMode={darkMode} formatter={(value) => `${Number(value).toFixed(1)} %`} />} />
+                                {allocationChart.cats.map(c => (
+                                    <Area key={c.value} isAnimationActive={false} type="monotone" dataKey={c.value} name={c.label} stackId="alloc" stroke={c.color} strokeWidth={1.25} fill={c.color} fillOpacity={0.75} activeDot={{ r: 3 }} />
+                                ))}
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    ) : <div className="h-full flex items-center justify-center text-gray-400 bg-gray-50 dark:bg-slate-700 rounded-xl">Pas assez de données : ajoutez des valorisations mensuelles</div>}
+                </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-lg">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-blue-500" /> Comparaison Benchmark</h3>
                     <div className="flex items-center gap-2">
                         <label className="text-xs font-bold text-gray-500 dark:text-gray-400">Indice :</label>
                         <select value={benchmarkSymbol} onChange={e => { setBenchmarkLoading(true); setBenchmarkSymbol(e.target.value); }} className="bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all">
                             {BENCHMARK_OPTIONS.map(o => <option key={o.symbol} value={o.symbol}>{o.label}</option>)}
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400">Année :</label>
+                        <select value={benchmarkChart?.activeYear ?? 'all'} onChange={e => setBenchmarkYear(e.target.value)} className="bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                            <option value="all">Tout</option>
+                            {[...(benchmarkChart?.years || [])].sort((a, b) => b.localeCompare(a)).map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
                     </div>
                 </div>
@@ -402,7 +512,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                         <p className="text-sm text-red-800 dark:text-red-200 flex-1">Impossible de charger l'indice {benchmarkLabel} : {benchmarkError}</p>
                         <button onClick={() => { setBenchmarkLoading(true); setBenchmarkRetry(r => r + 1); }} className="text-xs font-bold bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 whitespace-nowrap">Réessayer</button>
                     </div>
-                ) : benchmarkChart ? (
+                ) : benchmarkChart && benchmarkChart.points ? (
                     <>
                         <div className="flex flex-wrap items-center gap-2 mb-3">
                             <span className="inline-flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/50">
@@ -417,7 +527,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                                 Écart {benchmarkChart.outperformance >= 0 ? '+' : ''}{benchmarkChart.outperformance.toFixed(1)} pts
                             </span>
                         </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Performance nette des flux vs indice — base 100 au premier mois commun ({benchmarkChart.points[0].label})</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{benchmarkChart.windowDesc}</p>
                         <ChartLegend className="mb-3" items={[{ name: 'Portefeuille (TWR)', color: '#10B981' }, { name: benchmarkShort, color: '#8B5CF6' }]} />
                         <div className="h-72">
                             <ResponsiveContainer width="100%" height="100%">
@@ -437,6 +547,8 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                             </ResponsiveContainer>
                         </div>
                     </>
+                ) : benchmarkChart ? (
+                    <div className="text-center py-12 text-gray-400 text-sm">Pas assez de données pour tracer l'année {benchmarkChart.activeYear} — ajoutez des valorisations mensuelles.</div>
                 ) : (
                     <div className="text-center py-12 text-gray-400 text-sm">Données insuffisantes : ajoutez au moins 2 valorisations pour comparer.</div>
                 )}

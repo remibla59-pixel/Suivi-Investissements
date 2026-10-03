@@ -50,7 +50,7 @@ const getAccountInvestedTotalRaw = (acc) => {
     return getNetInvestedUntilDate(acc.movements, new Date().toISOString());
 };
 const getAccountInvestedAmountInEur = (acc) => { const inv = getAccountInvestedTotalRaw(acc); const rate = parseFloat(acc.exchangeRate || 1); return inv * rate; };
-const getTotalByBrokerInEur = (b) => b.accounts.reduce((sum, a) => sum + getAccountCurrentValueInEur(a), 0);
+const getTotalByBrokerInEur = (b) => b.accounts.filter(a => !a.closed).reduce((sum, a) => sum + getAccountCurrentValueInEur(a), 0);
 
 // --- APP PRINCIPALE ---
 
@@ -291,14 +291,14 @@ const InvestmentTrackerApp = () => {
 
   const showToast = (message, type = 'success') => setNotification({ message, type });
   
-  const totalPatrimony = useMemo(() => brokers.reduce((sum, b) => sum + b.accounts.reduce((s, a) => s + getAccountCurrentValueInEur(a), 0), 0), [brokers]);
-  const totalInvestedGlobal = useMemo(() => brokers.reduce((sum, b) => sum + b.accounts.reduce((s, a) => s + getAccountInvestedAmountInEur(a), 0), 0), [brokers]);
+  const totalPatrimony = useMemo(() => brokers.reduce((sum, b) => sum + b.accounts.filter(a => !a.closed).reduce((s, a) => s + getAccountCurrentValueInEur(a), 0), 0), [brokers]);
+  const totalInvestedGlobal = useMemo(() => brokers.reduce((sum, b) => sum + b.accounts.filter(a => !a.closed).reduce((s, a) => s + getAccountInvestedAmountInEur(a), 0), 0), [brokers]);
   const totalNetGainLoss = useMemo(() => totalPatrimony - totalInvestedGlobal, [totalPatrimony, totalInvestedGlobal]);
 
   const globalTRI = useMemo(() => {
     let allMovements = []; let currentTotalValue = 0;
     brokers.forEach(b => {
-        b.accounts.forEach(a => {
+        b.accounts.filter(a => !a.closed).forEach(a => {
             const rate = parseFloat(a.exchangeRate || 1);
             currentTotalValue += getAccountCurrentValueRaw(a) * rate;
             if(a.movements) {
@@ -350,7 +350,7 @@ const InvestmentTrackerApp = () => {
   const globalCategoryDistribution = useMemo(() => {
     const dist = {};
     brokers.forEach(b => {
-      b.accounts.forEach(acc => {
+      b.accounts.filter(a => !a.closed).forEach(acc => {
         const last = getLatestSnapshot(acc);
         const rate = parseFloat(acc.exchangeRate || 1);
         if (last?.categories) last.categories.forEach(c => {
@@ -397,7 +397,7 @@ const InvestmentTrackerApp = () => {
 
   const globalAccountTypeDistribution = useMemo(() => {
     const dist = {};
-    brokers.flatMap(b => b.accounts).forEach(acc => {
+    brokers.flatMap(b => b.accounts.filter(a => !a.closed)).forEach(acc => {
       const val = getAccountCurrentValueInEur(acc);
       const type = acc.type || 'Autre';
       dist[type] = (dist[type] || 0) + val;
@@ -428,6 +428,7 @@ const InvestmentTrackerApp = () => {
   };
   const deleteAccount = (brokerId, accountId) => { if(window.confirm('Supprimer ?')) { const updated = brokers.map(b => b.id === brokerId ? {...b, accounts: b.accounts.filter(a => a.id !== accountId)} : b); saveUserData(updated, undefined, undefined); const ub = updated.find(b => b.id === brokerId); if(selectedBroker?.id === brokerId) setSelectedBroker(ub); if(selectedAccount?.id === accountId) { setSelectedAccount(null); setView('accounts'); } showToast('Compte supprimé'); }};
   const handleSaveSnapshot = (brokerId, accountId, data) => {
+    if (selectedAccount?.closed && !data.id) { showToast('Compte clôturé : réouvrez-le pour ajouter des données', 'error'); return; }
     const total = data.categories.reduce((s, c) => s + parseFloat(c.amount || 0), 0);
     const newSnap = { ...data, amount: total.toFixed(2), id: data.id || Date.now() };
     const updated = brokers.map(b => b.id !== brokerId ? b : { ...b, accounts: b.accounts.map(a => a.id !== accountId ? a : { ...a, snapshots: data.id ? a.snapshots.map(s => s.id === data.id ? newSnap : s).sort((x, y) => new Date(x.date) - new Date(y.date)) : [...(a.snapshots || []), newSnap].sort((x, y) => new Date(x.date) - new Date(y.date)) }) });
@@ -435,6 +436,7 @@ const InvestmentTrackerApp = () => {
   };
   const deleteSnapshot = (brokerId, accountId, snapId) => { if(window.confirm('Supprimer ?')) { const updated = brokers.map(b => b.id !== brokerId ? b : { ...b, accounts: b.accounts.map(a => a.id !== accountId ? a : { ...a, snapshots: a.snapshots.filter(s => s.id !== snapId) }) }); saveUserData(updated, undefined, undefined); const ub = updated.find(b => b.id === brokerId); setSelectedBroker(ub); setSelectedAccount(ub.accounts.find(a => a.id === accountId)); showToast('Valorisation supprimée'); }};
   const handleSaveMovement = (data) => {
+      if (selectedAccount?.closed && !data.id) { showToast('Compte clôturé : réouvrez-le pour ajouter des données', 'error'); return; }
       let capitalPart = null;
       if (data.type === 'withdrawal') {
          const currentInvested = getAccountInvestedTotalRaw(selectedAccount);
@@ -454,6 +456,8 @@ const InvestmentTrackerApp = () => {
   const handleSaveTransfer = (data) => {
     let withdrawalCapitalPart = parseFloat(data.amount); 
     const sourceAccount = brokers.flatMap(b => b.accounts).find(a => a.id == data.sourceId);
+    const targetAccount = brokers.flatMap(b => b.accounts).find(a => a.id == data.targetId);
+    if (sourceAccount?.closed || targetAccount?.closed) { showToast('Compte clôturé : réouvrez-le pour effectuer un transfert', 'error'); return; }
     if (sourceAccount) {
         const currentInvested = getAccountInvestedTotalRaw(sourceAccount);
         const valueBefore = parseFloat(data.preValuation);
@@ -477,6 +481,23 @@ const InvestmentTrackerApp = () => {
     saveUserData(updated, undefined, undefined); showToast('Transfert effectué'); closeModal();
   };
 
+  const closeAccount = (brokerId, accountId) => {
+    if (!window.confirm("Clôturer ce compte ?\n\nIl ne comptera plus dans le patrimoine actuel ni dans la répartition : sa dernière valeur enregistrée sortira du portefeuille (sans impacter la performance passée). Tout l'historique est conservé et le compte pourra être réouvert.\n\nAstuce : saisissez une dernière valorisation si le solde a changé récemment.")) return;
+    const closedDate = new Date().toISOString().split('T')[0];
+    const updated = brokers.map(b => b.id !== brokerId ? b : { ...b, accounts: b.accounts.map(a => a.id !== accountId ? a : { ...a, closed: true, closedDate }) });
+    saveUserData(updated, undefined, undefined);
+    const ub = updated.find(b => b.id === brokerId); if (selectedBroker?.id === brokerId) setSelectedBroker(ub);
+    if (selectedAccount?.id === accountId) setSelectedAccount(ub.accounts.find(a => a.id === accountId));
+    showToast('Compte clôturé — historique conservé');
+  };
+  const reopenAccount = (brokerId, accountId) => {
+    const reopenedDate = new Date().toISOString().split('T')[0];
+    const updated = brokers.map(b => b.id !== brokerId ? b : { ...b, accounts: b.accounts.map(a => a.id !== accountId ? a : { ...a, closed: false, reopenedDate }) });
+    saveUserData(updated, undefined, undefined);
+    const ub = updated.find(b => b.id === brokerId); if (selectedBroker?.id === brokerId) setSelectedBroker(ub);
+    if (selectedAccount?.id === accountId) setSelectedAccount(ub.accounts.find(a => a.id === accountId));
+    showToast('Compte réouvert');
+  };
   if (firebaseError) return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4">
       <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-red-200 dark:border-red-800 max-w-md w-full text-center">
@@ -539,7 +560,7 @@ const InvestmentTrackerApp = () => {
           </div>
         </div>
       </header>
-      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard brokers={brokers} privacyMode={privacyMode} darkMode={darkMode} totalPatrimony={totalPatrimony} patrimonyGoal={patrimonyGoal} totalInvestedGlobal={totalInvestedGlobal} totalNetGainLoss={totalNetGainLoss} globalTRI={globalTRI} twr={globalTWR} globalCategoryDistribution={globalCategoryDistribution} globalAccountTypeDistribution={globalAccountTypeDistribution} crossDistributionData={crossDistributionData} targetAllocation={targetAllocation} openModal={openModal} />}{view === 'brokers' && <BrokersView brokers={brokers} privacyMode={privacyMode} getTotalByBrokerInEur={getTotalByBrokerInEur} onAdd={() => openModal('broker')} onEdit={(b) => openModal('broker', b)} onDelete={(id) => deleteBroker(id)} onSelect={(b) => { setSelectedBroker(b); setView('accounts'); }} />}{view === 'accounts' && <AccountsView selectedBroker={selectedBroker} privacyMode={privacyMode} getSortedAccounts={getSortedAccounts} getTotalByBrokerInEur={getTotalByBrokerInEur} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getAccountCurrentValueRaw={getAccountCurrentValueRaw} onBack={() => { setView('brokers'); setSelectedBroker(null); }} onAddAccount={() => openModal('account')} onEditAccount={(acc) => openModal('account', acc)} onDeleteAccount={(brokerId, accId) => deleteAccount(brokerId, accId)} onSelectAccount={(acc) => { setSelectedAccount(acc); setView('snapshots'); }} />}{view === 'snapshots' && <SnapshotsView selectedBroker={selectedBroker} selectedAccount={selectedAccount} privacyMode={privacyMode} darkMode={darkMode} getAccountCurrentValueRaw={getAccountCurrentValueRaw} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getLatestSnapshot={getLatestSnapshot} openModal={openModal} onDeleteSnapshot={(brokerId, accountId, snapId) => deleteSnapshot(brokerId, accountId, snapId)} onBack={() => { setView('accounts'); setSelectedAccount(null); }} />}{view === 'movements' && <MovementsGlobalView brokers={brokers} privacyMode={privacyMode} />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} globalTWR={globalTWR} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} darkMode={darkMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
+      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard brokers={brokers} privacyMode={privacyMode} darkMode={darkMode} totalPatrimony={totalPatrimony} patrimonyGoal={patrimonyGoal} totalInvestedGlobal={totalInvestedGlobal} totalNetGainLoss={totalNetGainLoss} globalTRI={globalTRI} twr={globalTWR} globalCategoryDistribution={globalCategoryDistribution} globalAccountTypeDistribution={globalAccountTypeDistribution} crossDistributionData={crossDistributionData} targetAllocation={targetAllocation} openModal={openModal} />}{view === 'brokers' && <BrokersView brokers={brokers} privacyMode={privacyMode} getTotalByBrokerInEur={getTotalByBrokerInEur} onAdd={() => openModal('broker')} onEdit={(b) => openModal('broker', b)} onDelete={(id) => deleteBroker(id)} onSelect={(b) => { setSelectedBroker(b); setView('accounts'); }} />}{view === 'accounts' && <AccountsView selectedBroker={selectedBroker} privacyMode={privacyMode} getSortedAccounts={getSortedAccounts} getTotalByBrokerInEur={getTotalByBrokerInEur} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getAccountCurrentValueRaw={getAccountCurrentValueRaw} onBack={() => { setView('brokers'); setSelectedBroker(null); }} onAddAccount={() => openModal('account')} onEditAccount={(acc) => openModal('account', acc)} onDeleteAccount={(brokerId, accId) => deleteAccount(brokerId, accId)} onCloseAccount={closeAccount} onReopenAccount={reopenAccount} onSelectAccount={(acc) => { setSelectedAccount(acc); setView('snapshots'); }} />}{view === 'snapshots' && <SnapshotsView selectedBroker={selectedBroker} selectedAccount={selectedAccount} privacyMode={privacyMode} darkMode={darkMode} getAccountCurrentValueRaw={getAccountCurrentValueRaw} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getLatestSnapshot={getLatestSnapshot} openModal={openModal} onDeleteSnapshot={(brokerId, accountId, snapId) => deleteSnapshot(brokerId, accountId, snapId)} onReopenAccount={reopenAccount} onBack={() => { setView('accounts'); setSelectedAccount(null); }} />}{view === 'movements' && <MovementsGlobalView brokers={brokers} privacyMode={privacyMode} />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} globalTWR={globalTWR} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} darkMode={darkMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
@@ -547,7 +568,7 @@ const InvestmentTrackerApp = () => {
       <Modal isOpen={modals.snapshot} onClose={closeModal} title={editData ? "Modifier valorisation" : "Nouvelle valorisation"}><SnapshotForm brokerId={selectedBroker?.id} accountId={selectedAccount?.id} onSubmit={handleSaveSnapshot} onCancel={closeModal} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
       <Modal isOpen={modals.movement} onClose={() => {closeModal(); openModal('movementList')}} title={editData ? "Modifier mouvement" : "Nouveau mouvement"}><MovementForm onSubmit={handleSaveMovement} onCancel={() => {closeModal(); openModal('movementList')}} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} lastValuation={getAccountCurrentValueRaw(selectedAccount || {})} /></Modal>
       <Modal isOpen={modals.transfer} onClose={closeModal} title="Effectuer un transfert"><TransferForm brokers={brokers} onSubmit={handleSaveTransfer} onCancel={closeModal} /></Modal>
-      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div><button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button><div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
+      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div>{!selectedAccount?.closed && <button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button>}<div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
       <Modal isOpen={modals.allocation} onClose={closeModal} title="Définir l'allocation cible"><TargetAllocationForm currentTargets={targetAllocation} onSubmit={(t) => { const newAlloc = t; saveUserData(undefined, undefined, newAlloc); closeModal(); showToast('Cibles mises à jour'); }} onCancel={closeModal} /></Modal>
       <Modal isOpen={modals.goal} onClose={closeModal} title="Objectif Patrimonial"><div className="space-y-4"><label className={labelClass}>Montant cible (€)</label><input type="number" defaultValue={patrimonyGoal} id="goalInput" className={`${inputClass} text-lg font-bold`} /><div className="flex justify-end gap-2 pt-4"><button onClick={closeModal} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const val = parseFloat(document.getElementById('goalInput').value); if(val > 0) { saveUserData(undefined, val, undefined); closeModal(); showToast('Objectif mis à jour'); } }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button></div></div></Modal>
       <Toast message={notification.message} type={notification.type} onClose={() => setNotification({ ...notification, message: '' })} />

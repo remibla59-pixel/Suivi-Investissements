@@ -17,6 +17,17 @@ export const BENCHMARK_OPTIONS = [
     { symbol: 'QQQ', label: 'Nasdaq 100 (ETF QQQ)', currency: 'USD' },
     { symbol: 'EWG', label: 'DAX (ETF EWG)', currency: 'USD' },
     { symbol: 'URTH', label: 'MSCI World (ETF URTH)', currency: 'USD' },
+    // Portefeuille composite 60/40 : actions monde (URTH) + obligations US (AGG),
+    // rééquilibré chaque mois puis converti en euros comme les autres ETF.
+    {
+        symbol: 'PORT_60_40',
+        label: '60/40 EUR (60 % actions monde / 40 % obligations US)',
+        currency: 'USD',
+        parts: [
+            { symbol: 'URTH', weight: 0.6 },
+            { symbol: 'AGG', weight: 0.4 },
+        ],
+    },
 ];
 
 export const getBenchmarkApiKey = () => import.meta.env.VITE_TWELVEDATA_API_KEY || '';
@@ -66,8 +77,32 @@ const fetchEurUsdMonthly = async (apiKey) => {
     return values;
 };
 
+// Portefeuille composite : chaîne de rendements mensuels pondérés (rééquilibrage
+// mensuel), démarrée à 100 au premier mois commun aux composants. Renvoie une série
+// [{ date, close }] au même format que fetchMonthlySeries, en USD.
+const fetchSyntheticSeries = async (parts, apiKey) => {
+    const maps = (await Promise.all(parts.map(p => fetchMonthlySeries(p.symbol, apiKey))))
+        .map(values => new Map(values.map(v => [v.date.slice(0, 7), v])));
+    const months = [...maps[0].keys()].filter(m => maps.every(map => map.has(m))).sort();
+    if (months.length < 2) throw new Error('Pas assez de mois communs entre les composants du portefeuille');
+
+    let level = 100;
+    const points = [{ date: maps[0].get(months[0]).date, close: level }];
+    for (let i = 1; i < months.length; i++) {
+        let growth = 0;
+        parts.forEach((part, idx) => {
+            const prevClose = maps[idx].get(months[i - 1]).close;
+            growth += part.weight * (maps[idx].get(months[i]).close / prevClose);
+        });
+        level *= growth;
+        points.push({ date: maps[0].get(months[i]).date, close: level });
+    }
+    return points;
+};
+
 // Retourne la série mensuelle [{ date: 'YYYY-MM-DD', close }] triée par date croissante,
 // avec les indices en USD convertis en euros (close EUR = close USD ÷ taux EUR/USD).
+// Les portefeuilles composites (option.parts) combinent plusieurs ETF pondérés.
 export const fetchBenchmarkMonthly = async (symbol, apiKey) => {
     if (!apiKey) throw new Error('NO_API_KEY');
 
@@ -76,7 +111,9 @@ export const fetchBenchmarkMonthly = async (symbol, apiKey) => {
     if (cached) return cached;
 
     const option = BENCHMARK_OPTIONS.find(o => o.symbol === symbol);
-    let values = await fetchMonthlySeries(symbol, apiKey);
+    let values = option && option.parts
+        ? await fetchSyntheticSeries(option.parts, apiKey)
+        : await fetchMonthlySeries(symbol, apiKey);
 
     if (option && option.currency === 'USD') {
         const fx = await fetchEurUsdMonthly(apiKey);

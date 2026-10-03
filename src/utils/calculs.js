@@ -237,9 +237,24 @@ export const processMonthlyStats = (brokers) => {
                 const rate = parseFloat(account.exchangeRate || 1);
                 const movements = account.movements || [];
 
+                // Comptes clôturés : l'historique reste compté jusqu'au mois de
+                // clôture inclus (avec sortie de la valeur restante, comptée comme un
+                // retrait donc sans impact sur la performance), puis le compte ne
+                // contribue plus. Un compte réouvert redémarre au mois de réouverture.
+                const closedFrom = account.closedDate ? account.closedDate.slice(0, 7) : null;
+                const closedTo = !account.closed && account.reopenedDate ? account.reopenedDate.slice(0, 7) : null;
+                const hasGap = !!closedFrom && (!closedTo || closedTo > closedFrom);
+                const isCloseMonth = hasGap && monthStr === closedFrom;
+                const isReopenMonth = hasGap && !!closedTo && monthStr === closedTo;
+                const isClosedGap = hasGap && monthStr > closedFrom && (account.closed || monthStr < closedTo);
+                if (isClosedGap) {
+                    prevValueByAccount.set(account.id, 0);
+                    return;
+                }
+
                 const relevantSnapshots = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
                 const lastSnap = relevantSnapshots.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-                const endVal = lastSnap ? parseFloat(lastSnap.amount) : 0;
+                let endVal = lastSnap ? parseFloat(lastSnap.amount) : 0;
                 const startVal = prevValueByAccount.get(account.id) || 0;
 
                 const monthMoves = movements.filter(m => m.date.startsWith(monthStr));
@@ -264,18 +279,26 @@ export const processMonthlyStats = (brokers) => {
                         }, 0);
                 }
 
+                // Mois de clôture : la valeur restante sort du portefeuille (retrait).
+                if (isCloseMonth) {
+                    monthFlow -= endVal;
+                    endVal = 0;
+                }
+
                 if (lastSnap) appearedByAccount.set(account.id, true);
                 prevValueByAccount.set(account.id, endVal);
 
                 totalValue += endVal * rate;
                 totalFlows += monthFlow * rate;
-                totalInvested += getNetInvestedUntilDate(movements, endOfMonthStr) * rate;
+                // Le capital investi quitte le portefeuille avec le compte clôturé.
+                if (!isCloseMonth) totalInvested += getNetInvestedUntilDate(movements, endOfMonthStr) * rate;
 
                 const accountBase = startVal + monthFlow * 0.5 + appearanceFlow;
                 // Contribution au rendement uniquement si le compte a une valorisation
                 // connue (sinon ses flux ne sont pas visibles dans la série de valeurs)
-                // et une base de calcul positive.
-                if (lastSnap && accountBase > 0) {
+                // et une base de calcul positive. Le mois de réouverture sert de
+                // nouveau socle : aucune performance n'y est attribuée.
+                if (lastSnap && accountBase > 0 && !isReopenMonth) {
                     perfAmount += (endVal - startVal - monthFlow - appearanceFlow) * rate;
                     perfBase += accountBase * rate;
                 }
@@ -298,4 +321,82 @@ export const processMonthlyStats = (brokers) => {
     }
 
     return stats;
+};
+
+// Indique si un compte est clôturé à une date donnée. Gère aussi la période de
+// clôture d'un compte réouvert (entre sa date de clôture et sa date de réouverture).
+export const isAccountClosedAt = (account, dateStr) => {
+    if (!account || !account.closedDate) return false;
+    if (account.closed) return dateStr >= account.closedDate;
+    if (account.reopenedDate) return dateStr >= account.closedDate && dateStr < account.reopenedDate;
+    return false;
+};
+
+// --- HELPER ALLOCATION DANS LE TEMPS ---
+// Répartition par classe d'actifs à chaque fin de mois, d'après la dernière
+// valorisation de chaque compte (convertie en euros). Les comptes clôturés
+// sortent de la répartition à partir de leur mois de clôture — et pendant toute
+// la période de clôture s'ils ont été réouverts.
+export const processAllocationHistory = (brokers) => {
+    let minDateMs = null;
+
+    brokers.forEach(b => b.accounts.forEach(a => {
+        (a.snapshots || []).forEach(s => {
+            const ms = new Date(s.date).getTime();
+            if (minDateMs === null || ms < minDateMs) minDateMs = ms;
+        });
+    }));
+
+    if (minDateMs === null) return [];
+
+    const startDate = new Date(minDateMs);
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date();
+    endDate.setDate(1);
+
+    const points = [];
+    const currentDate = new Date(startDate);
+
+    while (currentDate <= endDate) {
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const monthStr = `${year}-${month}`;
+        const lastDay = new Date(year, currentDate.getMonth() + 1, 0).getDate();
+        const endOfMonthStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+
+        const values = {};
+        let total = 0;
+
+        brokers.forEach(b => b.accounts.forEach(account => {
+            const closedFrom = account.closedDate ? account.closedDate.slice(0, 7) : null;
+            const closedTo = !account.closed && account.reopenedDate ? account.reopenedDate.slice(0, 7) : null;
+            const isClosed = !!closedFrom && monthStr >= closedFrom && (account.closed || (!!closedTo && monthStr < closedTo));
+            if (isClosed) return;
+
+            const relevant = (account.snapshots || []).filter(s => s.date <= endOfMonthStr);
+            const lastSnap = relevant.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+            if (!lastSnap || !lastSnap.categories) return;
+
+            const rate = parseFloat(account.exchangeRate || 1);
+            lastSnap.categories.forEach(c => {
+                const v = parseFloat(c.amount || 0) * rate;
+                values[c.type] = (values[c.type] || 0) + v;
+                total += v;
+            });
+        }));
+
+        if (total > 0) {
+            points.push({
+                month: monthStr,
+                displayDate: currentDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
+                total,
+                values
+            });
+        }
+
+        currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+
+    return points;
 };
