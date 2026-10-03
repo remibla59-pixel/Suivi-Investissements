@@ -2,16 +2,17 @@
 // Constantes métier partagées par l'ensemble des vues (axe 2 de l'audit).
 import { TrendingUp, DollarSign, TrendingDown, BarChart3, Gem, Home, Wallet, PieChart as PieChartIcon } from 'lucide-react';
 
+// Palette « journal de bord » : teintes sourdes, lisibles sur papier ivoire.
 export const INVESTMENT_CATEGORIES = [
-  { value: 'actions', label: 'Actions / ETF', color: '#10B981', icon: TrendingUp },
-  { value: 'fondsEuros', label: 'Fonds Euros', color: '#3B82F6', icon: DollarSign },
-  { value: 'obligations', label: 'Obligations', color: '#F59E0B', icon: TrendingDown },
-  { value: 'crypto', label: 'Crypto', color: '#6366F1', icon: BarChart3 },
-  { value: 'or', label: 'Or / Métaux', color: '#FCD34D', icon: Gem },
-  { value: 'immobilier', label: 'Immobilier (SCPI)', color: '#EF4444', icon: Home },
-  { value: 'liquidites', label: 'Liquidités', color: '#6B7280', icon: Wallet },
-  { value: 'dette', label: 'Dette / Levier', color: '#DC2626', icon: TrendingDown },
-  { value: 'autre', label: 'Autre', color: '#9CA3AF', icon: PieChartIcon }
+  { value: 'actions', label: 'Actions / ETF', color: '#14603B', icon: TrendingUp },
+  { value: 'fondsEuros', label: 'Fonds Euros', color: '#1F4E79', icon: DollarSign },
+  { value: 'obligations', label: 'Obligations', color: '#9A6B2F', icon: TrendingDown },
+  { value: 'crypto', label: 'Crypto', color: '#6B4E8F', icon: BarChart3 },
+  { value: 'or', label: 'Or / Métaux', color: '#C9A227', icon: Gem },
+  { value: 'immobilier', label: 'Immobilier (SCPI)', color: '#A4493C', icon: Home },
+  { value: 'liquidites', label: 'Liquidités', color: '#6E7685', icon: Wallet },
+  { value: 'dette', label: 'Dette / Levier', color: '#8C2F39', icon: TrendingDown },
+  { value: 'autre', label: 'Autre', color: '#9AA0A6', icon: PieChartIcon }
 ];
 
 // Sous-catégories optionnelles proposées sous chaque classe d'actifs (ex. Actions
@@ -51,14 +52,14 @@ export const getSubcategoryLabel = (type, sub) =>
   INVESTMENT_SUBCATEGORIES[type]?.find(s => s.value === sub)?.label || sub;
 
 export const ACCOUNT_TYPES = [
-  { value: 'PEA', label: 'PEA', color: '#3B82F6' },
-  { value: 'CTO', label: 'Compte Titres', color: '#10B981' },
-  { value: 'AV', label: 'Assurance Vie', color: '#F59E0B' },
-  { value: 'PER', label: 'PER', color: '#8B5CF6' },
-  { value: 'PEE', label: 'PEE', color: '#EC4899' },
-  { value: 'Crypto', label: 'Crypto', color: '#EF4444' },
-  { value: 'Livret', label: 'Livret', color: '#14B8A6' },
-  { value: 'Autre', label: 'Autre', color: '#6B7280' }
+  { value: 'PEA', label: 'PEA', color: '#1F4E79' },
+  { value: 'CTO', label: 'Compte Titres', color: '#14603B' },
+  { value: 'AV', label: 'Assurance Vie', color: '#9A6B2F' },
+  { value: 'PER', label: 'PER', color: '#6B4E8F' },
+  { value: 'PEE', label: 'PEE', color: '#A4493C' },
+  { value: 'Crypto', label: 'Crypto', color: '#8C2F39' },
+  { value: 'Livret', label: 'Livret', color: '#2F6F6B' },
+  { value: 'Autre', label: 'Autre', color: '#6E7685' }
 ];
 
 export const CURRENCIES = [

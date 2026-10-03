@@ -366,6 +366,9 @@ export const processAllocationHistory = (brokers) => {
         const endOfMonthStr = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
 
         const values = {};
+        // Détail optionnel par sous-catégorie : clé « type|sous-catégorie », ou
+        // « type|__sans » pour les montants saisis sans sous-catégorie.
+        const subValues = {};
         let total = 0;
 
         brokers.forEach(b => b.accounts.forEach(account => {
@@ -382,6 +385,8 @@ export const processAllocationHistory = (brokers) => {
             lastSnap.categories.forEach(c => {
                 const v = parseFloat(c.amount || 0) * rate;
                 values[c.type] = (values[c.type] || 0) + v;
+                const subKey = `${c.type}|${c.sub || '__sans'}`;
+                subValues[subKey] = (subValues[subKey] || 0) + v;
                 total += v;
             });
         }));
@@ -391,7 +396,8 @@ export const processAllocationHistory = (brokers) => {
                 month: monthStr,
                 displayDate: currentDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }),
                 total,
-                values
+                values,
+                subValues
             });
         }
 

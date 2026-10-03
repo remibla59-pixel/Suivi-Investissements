@@ -51,28 +51,28 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
         if (!periodSummary) return [];
         const { startValue, totalFlows, performance, endValue } = periodSummary;
         return [
-            { name: 'Départ', base: 0, value: startValue, fill: '#64748B' },
-            { name: 'Flux nets', base: startValue, value: totalFlows, fill: totalFlows >= 0 ? '#3B82F6' : '#F59E0B' },
-            { name: 'Performance', base: startValue + totalFlows, value: performance, fill: performance >= 0 ? '#10B981' : '#EF4444' },
-            { name: 'Valeur finale', base: 0, value: endValue, fill: '#8B5CF6' },
+            { name: 'Départ', base: 0, value: startValue, fill: '#6E7685' },
+            { name: 'Flux nets', base: startValue, value: totalFlows, fill: totalFlows >= 0 ? '#1F4E79' : '#9A6B2F' },
+            { name: 'Performance', base: startValue + totalFlows, value: performance, fill: performance >= 0 ? '#14603B' : '#8C2F39' },
+            { name: 'Valeur finale', base: 0, value: endValue, fill: '#9A6B2F' },
         ];
     }, [periodSummary]);
 
-    if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-gray-300 mx-auto mb-4" /><p className="text-gray-500">Ajoutez des valorisations pour voir l'historique.</p></div>;
+    if (!fullStats.length) return <div className="text-center py-20"><History className="w-16 h-16 text-[#B6BCC6] mx-auto mb-4" /><p className="text-[#6E7685]">Ajoutez des valorisations pour voir l'historique.</p></div>;
 
     return (
         <div className="space-y-6 animate-fade-in w-full max-w-5xl mx-auto">
              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
                 <div className="flex items-center gap-3">
                     <div className="bg-orange-500 p-2 rounded-lg text-white"><Calendar className="w-6 h-6" /></div>
-                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Rapport Mensuel</h2>
+                    <h2 className="text-2xl font-bold text-[#16233B] dark:text-white">Rapport Mensuel</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                    <label className="text-sm font-bold text-gray-500 dark:text-gray-400">Année :</label>
+                    <label className="text-sm font-bold text-[#6E7685] dark:text-slate-400">Année :</label>
                     <select
                         value={selectedYear}
                         onChange={(e) => setSelectedYear(e.target.value)}
-                        className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+                        className="bg-[#FDFCF9] dark:bg-slate-800 border border-[#E1DCD0] dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-orange-500 transition-all"
                     >
                         <option value="all">Toutes les années</option>
                         {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -80,33 +80,33 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                 </div>
             </div>
              {periodSummary && (
-             <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+             <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
-                    <h3 className="font-bold text-gray-800 dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-green-500" /> Performance Globale de la Période</h3>
+                    <h3 className="font-bold text-[#16233B] dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-green-500" /> Performance Globale de la Période</h3>
                     <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300">{periodSummary.months} mois</span>
                 </div>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-                    <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Valeur de départ</div>
-                        <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={periodSummary.startValue} privacyMode={privacyMode} /></div>
+                    <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
+                        <div className="text-xs font-bold text-[#6E7685] dark:text-slate-400 uppercase tracking-wide mb-1">Valeur de départ</div>
+                        <div className="text-xl sm:text-2xl font-bold text-[#16233B] dark:text-white"><BlurMoney amount={periodSummary.startValue} privacyMode={privacyMode} /></div>
                     </div>
-                    <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Flux nets</div>
-                        <div className={`text-xl sm:text-2xl font-bold ${periodSummary.totalFlows >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-orange-500 dark:text-orange-400'}`}>{periodSummary.totalFlows > 0 ? '+' : ''}<BlurMoney amount={periodSummary.totalFlows} privacyMode={privacyMode} /></div>
+                    <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
+                        <div className="text-xs font-bold text-[#6E7685] dark:text-slate-400 uppercase tracking-wide mb-1">Flux nets</div>
+                        <div className={`text-xl sm:text-2xl font-bold ${periodSummary.totalFlows >= 0 ? 'text-[#14603B] dark:text-emerald-400' : 'text-orange-500 dark:text-orange-400'}`}>{periodSummary.totalFlows > 0 ? '+' : ''}<BlurMoney amount={periodSummary.totalFlows} privacyMode={privacyMode} /></div>
                     </div>
-                    <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Performance nette</div>
+                    <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
+                        <div className="text-xs font-bold text-[#6E7685] dark:text-slate-400 uppercase tracking-wide mb-1">Performance nette</div>
                         <div className={`text-xl sm:text-2xl font-bold ${periodSummary.performance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{periodSummary.performance > 0 ? '+' : ''}<BlurMoney amount={periodSummary.performance} privacyMode={privacyMode} /></div>
-                        <div className="text-xs font-semibold mt-1 text-gray-500 dark:text-gray-400">{periodSummary.yieldPct >= 0 ? '+' : ''}{periodSummary.yieldPct.toFixed(1)}% sur la période</div>
+                        <div className="text-xs font-semibold mt-1 text-[#6E7685] dark:text-slate-400">{periodSummary.yieldPct >= 0 ? '+' : ''}{periodSummary.yieldPct.toFixed(1)}% sur la période</div>
                     </div>
-                    <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">TWR (période)</div>
+                    <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
+                        <div className="text-xs font-bold text-[#6E7685] dark:text-slate-400 uppercase tracking-wide mb-1">TWR (période)</div>
                         <div className={`text-xl sm:text-2xl font-bold ${periodSummary.twr >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{periodSummary.twr > 0 ? '+' : ''}{periodSummary.twr.toFixed(2)}%</div>
-                        <div className="text-xs font-semibold mt-1 text-gray-500 dark:text-gray-400">{periodSummary.twrAnnualized !== null ? `Soit ${periodSummary.twrAnnualized >= 0 ? '+' : ''}${periodSummary.twrAnnualized.toFixed(1)}% / an` : 'Rendement annualisé indisponible'}</div>
+                        <div className="text-xs font-semibold mt-1 text-[#6E7685] dark:text-slate-400">{periodSummary.twrAnnualized !== null ? `Soit ${periodSummary.twrAnnualized >= 0 ? '+' : ''}${periodSummary.twrAnnualized.toFixed(1)}% / an` : 'Rendement annualisé indisponible'}</div>
                     </div>
-                    <div className="bg-gray-50 dark:bg-slate-700/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Valeur finale</div>
-                        <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white"><BlurMoney amount={periodSummary.endValue} privacyMode={privacyMode} /></div>
+                    <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
+                        <div className="text-xs font-bold text-[#6E7685] dark:text-slate-400 uppercase tracking-wide mb-1">Valeur finale</div>
+                        <div className="text-xl sm:text-2xl font-bold text-[#16233B] dark:text-white"><BlurMoney amount={periodSummary.endValue} privacyMode={privacyMode} /></div>
                     </div>
                 </div>
                 <div className="h-72">
@@ -125,10 +125,10 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
                 </div>
             </div>
              )}
-             <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg">
+             <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                    <h3 className="font-bold text-gray-800 dark:text-white">Performance Nette par Mois (€)</h3>
-                    <ChartLegend items={[{ name: 'Gain/Perte Net', color: '#10B981' }, { name: 'Rendement', color: '#F59E0B' }]} />
+                    <h3 className="font-bold text-[#16233B] dark:text-white">Performance Nette par Mois (€)</h3>
+                    <ChartLegend items={[{ name: 'Gain/Perte Net', color: '#14603B' }, { name: 'Rendement', color: '#9A6B2F' }]} />
                 </div>
                 <div className="h-80">
     <ResponsiveContainer width="100%" height="100%">
@@ -136,31 +136,31 @@ export const HistoryView = ({ brokers, darkMode, privacyMode }) => {
             <CartesianGrid {...gridStroke(darkMode)} />
             <XAxis dataKey="displayDate" tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickMargin={6} minTickGap={20} />
             <YAxis yAxisId="left" width={54} tick={{ ...axisTickProps(darkMode) }} axisLine={false} tickLine={false} tickFormatter={v => privacyMode ? '***' : formatCompactAxis(v, '€')} />
-            <YAxis yAxisId="right" orientation="right" width={38} tick={{ ...axisTickProps(darkMode), fill: '#F59E0B' }} axisLine={false} tickLine={false} tickFormatter={v => `${v.toFixed(1)}%`} />
+            <YAxis yAxisId="right" orientation="right" width={38} tick={{ ...axisTickProps(darkMode), fill: '#9A6B2F' }} axisLine={false} tickLine={false} tickFormatter={v => `${v.toFixed(1)}%`} />
             <Tooltip cursor={{ fill: darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }} content={<ChartTooltip darkMode={darkMode} formatter={(value, entry) => entry.dataKey === 'yield' ? `${Number(value).toFixed(2)} %` : (privacyMode ? '**** €' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value))} />} />
-            <ReferenceLine y={0} yAxisId="left" stroke={darkMode ? '#475569' : '#CBD5E1'} />
-            <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#3B82F6" barSize={34} radius={[5, 5, 0, 0]}>
-                {stats.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#10B981' : '#EF4444'} />))}
+            <ReferenceLine y={0} yAxisId="left" stroke={darkMode ? '#475569' : '#D8D2C4'} />
+            <Bar yAxisId="left" dataKey="performance" name="Gain/Perte Net" fill="#1F4E79" barSize={34} radius={[5, 5, 0, 0]}>
+                {stats.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.performance >= 0 ? '#14603B' : '#8C2F39'} />))}
             </Bar>
-            <Line yAxisId="right" type="monotone" dataKey="yield" name="Rendement" stroke="#F59E0B" strokeWidth={2.5} dot={false} strokeLinecap="round" activeDot={{ r: 5 }} />
+            <Line yAxisId="right" type="monotone" dataKey="yield" name="Rendement" stroke="#9A6B2F" strokeWidth={2.5} dot={false} strokeLinecap="round" activeDot={{ r: 5 }} />
         </ComposedChart>
     </ResponsiveContainer>
 </div>
             </div>
-            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-lg overflow-hidden">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 rounded-xl border border-[#E4E0D6] dark:border-slate-700 shadow-none overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
-                        <thead className="bg-gray-50 dark:bg-slate-700 text-gray-500 dark:text-gray-300 font-bold">
+                        <thead className="bg-[#F3F1EA] dark:bg-slate-700 text-[#6E7685] dark:text-slate-300 font-bold">
                             <tr><th className="p-4">Mois</th><th className="p-4 text-right">Valeur Fin</th><th className="p-4 text-right">Investi Total</th><th className="p-4 text-right">Flux Mois</th><th className="p-4 text-right">Variation</th><th className="p-4 text-right">Perf. Nette</th><th className="p-4 text-right">Rendement</th></tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
+                        <tbody className="divide-y divide-[#E4E0D6] dark:divide-slate-700">
                             {[...stats].reverse().map((stat, i) => (
-                                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
-                                    <td className="p-4 font-bold text-gray-800 dark:text-white">{stat.displayDate}</td>
-                                    <td className="p-4 text-right font-medium text-gray-900 dark:text-white"><BlurMoney amount={stat.value} privacyMode={privacyMode} /></td>
-                                    <td className="p-4 text-right text-gray-500 dark:text-gray-400"><BlurMoney amount={stat.invested} privacyMode={privacyMode} /></td>
-                                    <td className={`p-4 text-right font-medium ${stat.flow > 0 ? 'text-blue-600' : stat.flow < 0 ? 'text-orange-500' : 'text-gray-400'}`}>{stat.flow > 0 ? '+' : ''}{stat.flow !== 0 ? <BlurMoney amount={stat.flow} privacyMode={privacyMode} /> : '-'}</td>
-                                    <td className="p-4 text-right text-gray-500 dark:text-gray-400">{stat.variation > 0 ? '+' : ''}<BlurMoney amount={stat.variation} privacyMode={privacyMode} /></td>
+                                <tr key={i} className="hover:bg-[#F3F1EA] dark:hover:bg-slate-700/50 transition-colors">
+                                    <td className="p-4 font-bold text-[#16233B] dark:text-white">{stat.displayDate}</td>
+                                    <td className="p-4 text-right font-medium text-[#16233B] dark:text-white"><BlurMoney amount={stat.value} privacyMode={privacyMode} /></td>
+                                    <td className="p-4 text-right text-[#6E7685] dark:text-slate-400"><BlurMoney amount={stat.invested} privacyMode={privacyMode} /></td>
+                                    <td className={`p-4 text-right font-medium ${stat.flow > 0 ? 'text-[#14603B]' : stat.flow < 0 ? 'text-orange-500' : 'text-[#8B93A1]'}`}>{stat.flow > 0 ? '+' : ''}{stat.flow !== 0 ? <BlurMoney amount={stat.flow} privacyMode={privacyMode} /> : '-'}</td>
+                                    <td className="p-4 text-right text-[#6E7685] dark:text-slate-400">{stat.variation > 0 ? '+' : ''}<BlurMoney amount={stat.variation} privacyMode={privacyMode} /></td>
                                     <td className={`p-4 text-right font-bold ${stat.performance >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{stat.performance > 0 ? '+' : ''}<BlurMoney amount={stat.performance} privacyMode={privacyMode} /></td>
                                     <td className={`p-4 text-right font-bold ${stat.yield >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{stat.yield > 0 ? '+' : ''}{stat.yield.toFixed(2)}%</td>
                                 </tr>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { PlusCircle, Trash2, Edit2, Wallet, Download, Upload, ArrowDownCircle, ArrowUpCircle, LogOut, Loader2, Save, Moon, Sun, ArrowRightLeft, Percent, RotateCcw, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { PlusCircle, Trash2, Edit2, Wallet, Download, Upload, ArrowDownCircle, ArrowUpCircle, LogOut, Loader2, Save, Moon, Sun, ArrowRightLeft, ArrowRight, Percent, RotateCcw, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -7,7 +7,7 @@ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChang
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import { calculateXIRR, getNetInvestedUntilDate, processMonthlyStats, calculateTWR, annualizeReturn, calculateTWRFromSnapshots } from "./utils/calculs.js";
 import { INVESTMENT_CATEGORIES, ACCOUNT_TYPES, CURRENCIES, getSubcategoryLabel } from "./utils/constantes.js";
-import { BlurMoney, Toast, Modal, inputClass, labelClass } from "./components/ui.jsx";
+import { BlurMoney, Toast, Modal, inputClass, labelClass, CompassRose } from "./components/ui.jsx";
 import { SimulationView } from "./components/views/SimulationView.jsx";
 import { MovementsGlobalView } from "./components/views/MovementsGlobalView.jsx";
 import { HistoryView } from "./components/views/HistoryView.jsx";
@@ -410,7 +410,7 @@ const InvestmentTrackerApp = () => {
     const absTotal = Object.values(dist).reduce((a, b) => a + Math.abs(b), 0);
     return Object.entries(dist).map(([k, v]) => {
       const t = ACCOUNT_TYPES.find(type => type.value === k);
-      return { label: t?.label || k, value: v, color: t?.color || '#9CA3AF', percentage: absTotal ? (Math.abs(v)/absTotal*100).toFixed(1) : 0, type: k };
+      return { label: t?.label || k, value: v, color: t?.color || '#6E7685', percentage: absTotal ? (Math.abs(v)/absTotal*100).toFixed(1) : 0, type: k };
     }).sort((a, b) => b.value - a.value);
   }, [brokers]);
 
@@ -504,12 +504,12 @@ const InvestmentTrackerApp = () => {
     showToast('Compte réouvert');
   };
   if (firebaseError) return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-red-200 dark:border-red-800 max-w-md w-full text-center">
+    <div className="min-h-screen bg-[#F6F4EE] dark:bg-slate-900 flex flex-col items-center justify-center p-4">
+      <div className="bg-[#FDFCF9] dark:bg-slate-800 p-8 rounded-md shadow-xl border border-red-200 dark:border-red-800 max-w-md w-full text-center">
         <div className="bg-red-100 dark:bg-red-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><AlertCircle className="w-10 h-10 text-red-500 dark:text-red-400" /></div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Configuration Firebase manquante</h1>
-        <p className="text-gray-500 dark:text-gray-400 mb-4">Impossible d'initialiser Firebase. Ajoutez les variables suivantes dans l'onglet « Keys/API keys » puis relancez l'application :</p>
-        <ul className="text-left text-xs font-mono bg-gray-50 dark:bg-slate-700/50 border border-gray-200 dark:border-slate-600 rounded-lg p-3 mb-4 space-y-1 text-gray-700 dark:text-gray-300">
+        <h1 className="text-2xl font-bold text-[#16233B] dark:text-white mb-2">Configuration Firebase manquante</h1>
+        <p className="text-[#6E7685] dark:text-slate-400 mb-4">Impossible d'initialiser Firebase. Ajoutez les variables suivantes dans l'onglet « Keys/API keys » puis relancez l'application :</p>
+        <ul className="text-left text-xs font-mono bg-[#F3F1EA] dark:bg-slate-700/50 border border-[#E1DCD0] dark:border-slate-600 rounded-lg p-3 mb-4 space-y-1 text-[#2A3B55] dark:text-slate-300">
           <li>VITE_FIREBASE_API_KEY</li>
           <li>VITE_FIREBASE_AUTH_DOMAIN</li>
           <li>VITE_FIREBASE_PROJECT_ID</li>
@@ -524,48 +524,85 @@ const InvestmentTrackerApp = () => {
       </div>
     </div>
   );
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900"><Loader2 className="w-10 h-10 text-blue-600 animate-spin" /></div>;
-  if (!user) return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4"><div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 max-w-md w-full text-center"><div className="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6"><Wallet className="w-10 h-10 text-blue-600 dark:text-blue-400" /></div><h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Mon Patrimoine</h1><p className="text-gray-500 dark:text-gray-400 mb-8">Connectez-vous pour synchroniser vos investissements.</p><button onClick={handleLogin} disabled={authLoading} className="w-full bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-white font-bold py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-600 transition-all flex items-center justify-center gap-3 shadow-sm">Continuer avec Google</button></div></div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F6F4EE] dark:bg-slate-900"><Loader2 className="w-10 h-10 text-[#14603B] animate-spin" /></div>;
+  // Page de connexion : le « héros » du journal (papier quadrillé + rose des vents),
+  // comme la couverture d'un carnet de bord.
+  if (!user) return (
+    <div className="min-h-screen paper-grid flex flex-col">
+      <header className="border-b border-[#E4E0D6] bg-[#F6F4EE]/90">
+        <div className="mx-auto max-w-6xl w-full px-6 py-4 flex items-center gap-3">
+          <CompassRose className="w-9 h-9 flex-shrink-0" opacity={0.8} />
+          <div className="leading-none">
+            <span className="kicker block mb-1">Le journal de bord</span>
+            <span className="block text-lg font-bold text-[#16233B]">Suivi Investissements</span>
+          </div>
+        </div>
+      </header>
+      <div className="relative flex-1 flex items-center overflow-hidden">
+        <CompassRose className="hidden lg:block absolute -right-16 top-1/2 -translate-y-1/2 w-[30rem] h-[30rem] pointer-events-none" opacity={0.14} />
+        <div className="relative mx-auto max-w-6xl w-full px-6 py-16 sm:py-20">
+          <p className="kicker">Budget · Investissement · Suivi de patrimoine</p>
+          <h1 className="mt-5 text-5xl sm:text-6xl leading-[1.04] max-w-2xl">Suivi Investissements</h1>
+          <p className="mt-6 max-w-xl text-lg text-[#3C4A61]">Ce que j'ai appris en gérant mon budget, puis mon patrimoine : valorisations, allocation, performance et comparaison aux indices — réunis dans un seul carnet.</p>
+          <div className="mt-9 flex flex-wrap items-center gap-4">
+            <button onClick={handleLogin} disabled={authLoading} className="inline-flex items-center gap-2 bg-[#14603B] text-white px-6 py-3 font-semibold rounded-full hover:bg-[#0F4C2F] transition-colors disabled:opacity-60">
+              Créer mon carnet de bord <ArrowRight className="w-4 h-4" />
+            </button>
+            <span className="text-sm text-[#6E7685]">Connexion Google — vos données restent privées.</span>
+          </div>
+        </div>
+      </div>
+      <footer className="border-t border-[#E4E0D6]">
+        <div className="mx-auto max-w-6xl w-full px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <p className="text-xs text-[#6E7685] max-w-2xl">Les contenus de cette application sont pédagogiques et ne constituent pas un conseil en investissement.</p>
+          <p className="kicker whitespace-nowrap">{new Date().getFullYear()} · Journal de bord</p>
+        </div>
+      </footer>
+    </div>
+  );
 
   
   return (
-    <div className={`min-h-screen font-sans pb-20 w-full transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-gray-900'}`}>
-      <header className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-30 shadow-md w-full">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-xl cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setView('dashboard')}>
-            <div className="bg-blue-600 text-white p-1.5 rounded-lg"><Wallet className="w-6 h-6" /></div>
-            <span className="hidden sm:inline">Suivi Investissements</span>
+    <div className={`min-h-screen w-full transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-white' : 'paper-grid text-[#16233B]'}`}>
+      <header className="bg-[#F6F4EE]/95 dark:bg-slate-900/95 backdrop-blur border-b border-[#E4E0D6] dark:border-slate-700 sticky top-0 z-30 w-full">
+        <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-3 sm:gap-6">
+          <div className="flex items-center gap-3 flex-shrink-0 cursor-pointer group" onClick={() => setView('dashboard')}>
+            <CompassRose className="w-9 h-9 flex-shrink-0" opacity={darkMode ? 0.5 : 0.8} />
+            <div className="leading-none">
+              <span className="kicker hidden sm:block mb-1">Le journal de bord</span>
+              <span className="block text-lg font-bold text-[#16233B] dark:text-white group-hover:text-[#14603B] dark:group-hover:text-emerald-400 transition-colors">Suivi Investissements</span>
+            </div>
           </div>
-          <nav className="flex items-center gap-1 bg-gray-100 dark:bg-slate-700 p-1 rounded-xl overflow-x-auto">
+          <nav className="flex items-center gap-4 sm:gap-6 overflow-x-auto">
             {['dashboard', 'brokers', 'movements', 'simulation', 'history'].map(k => (
                 <button 
                 key={k} 
                 onClick={() => { setView(k); setSelectedBroker(null); setSelectedAccount(null); }} 
-                className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${view === k ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}
+                className={`kicker pb-1 border-b transition-colors whitespace-nowrap ${view === k ? 'border-[#14603B] text-[#16233B] dark:text-white' : 'border-transparent text-[#6E7685] dark:text-slate-400 hover:text-[#16233B] dark:hover:text-white hover:border-[#C9A227]'}`}
                 >
-                {k === 'dashboard' ? 'Dash' : k === 'brokers' ? 'Courtiers' : k === 'movements' ? 'Mouvements' : k === 'simulation' ? 'Simul' : 'Historique'}
+                {k === 'dashboard' ? 'Tableau de bord' : k === 'brokers' ? 'Courtiers' : k === 'movements' ? 'Mouvements' : k === 'simulation' ? 'Simulation' : 'Historique'}
                 </button>
             ))}
             </nav>
           <div className="flex gap-2 items-center">
-            {saving && <Save className="w-5 h-5 text-gray-400 animate-pulse" />}
-            <button onClick={() => setPrivacyMode(!privacyMode)} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors" title={privacyMode ? "Afficher montants" : "Masquer montants"}>{privacyMode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button>
-            <button onClick={() => openModal('transfer')} className="p-2 text-indigo-500 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors" title="Transfert"><ArrowRightLeft className="w-5 h-5" /></button>
-            <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-gray-500 dark:text-yellow-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">{darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
-            <div className="h-8 w-px bg-gray-200 dark:bg-slate-700 mx-2"></div>
+            {saving && <Save className="w-5 h-5 text-[#8B93A1] animate-pulse" />}
+            <button onClick={() => setPrivacyMode(!privacyMode)} className="p-2 text-[#6E7685] dark:text-slate-400 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg transition-colors" title={privacyMode ? "Afficher montants" : "Masquer montants"}>{privacyMode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}</button>
+            <button onClick={() => openModal('transfer')} className="p-2 text-[#1B2A41] dark:text-indigo-400 hover:bg-[#EDEAE0] dark:hover:bg-indigo-900/20 rounded-lg transition-colors" title="Transfert"><ArrowRightLeft className="w-5 h-5" /></button>
+            <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-[#6E7685] dark:text-yellow-400 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg transition-colors">{darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
+            <div className="h-8 w-px bg-[#E4E0D6] dark:bg-slate-700 mx-2"></div>
             
             {/* BOUTONS IMPORT / EXPORT */}
             <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".json,.csv" />
-            <button onClick={() => fileInputRef.current.click()} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Importer (JSON ou CSV)"><Upload className="w-5 h-5" /></button>
-            <button onClick={handleExport} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Exporter Cloud (JSON)"><Download className="w-5 h-5" /></button>
+            <button onClick={() => fileInputRef.current.click()} className="p-2 text-[#6E7685] dark:text-slate-400 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg" title="Importer (JSON ou CSV)"><Upload className="w-5 h-5" /></button>
+            <button onClick={handleExport} className="p-2 text-[#6E7685] dark:text-slate-400 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg" title="Exporter Cloud (JSON)"><Download className="w-5 h-5" /></button>
             <button onClick={handleExportCSV} className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg ml-1" title="Export Excel (CSV)"><div className="font-bold text-xs border border-current rounded px-1">CSV</div></button>
             
             <button onClick={handleResetData} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg ml-2" title="Réinitialiser"><RotateCcw className="w-5 h-5" /></button>
-            <button onClick={handleLogout} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg" title="Déconnexion"><LogOut className="w-5 h-5" /></button>
+            <button onClick={handleLogout} className="p-2 text-[#6E7685] dark:text-slate-400 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg" title="Déconnexion"><LogOut className="w-5 h-5" /></button>
           </div>
         </div>
       </header>
-      <main className="w-full px-4 sm:px-6 lg:px-8 py-8">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-gray-300 animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard brokers={brokers} privacyMode={privacyMode} darkMode={darkMode} totalPatrimony={totalPatrimony} patrimonyGoal={patrimonyGoal} totalInvestedGlobal={totalInvestedGlobal} totalNetGainLoss={totalNetGainLoss} globalTRI={globalTRI} twr={globalTWR} globalCategoryDistribution={globalCategoryDistribution} globalAccountTypeDistribution={globalAccountTypeDistribution} crossDistributionData={crossDistributionData} targetAllocation={targetAllocation} openModal={openModal} />}{view === 'brokers' && <BrokersView brokers={brokers} privacyMode={privacyMode} getTotalByBrokerInEur={getTotalByBrokerInEur} onAdd={() => openModal('broker')} onEdit={(b) => openModal('broker', b)} onDelete={(id) => deleteBroker(id)} onSelect={(b) => { setSelectedBroker(b); setView('accounts'); }} />}{view === 'accounts' && <AccountsView selectedBroker={selectedBroker} privacyMode={privacyMode} getSortedAccounts={getSortedAccounts} getTotalByBrokerInEur={getTotalByBrokerInEur} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getAccountCurrentValueRaw={getAccountCurrentValueRaw} onBack={() => { setView('brokers'); setSelectedBroker(null); }} onAddAccount={() => openModal('account')} onEditAccount={(acc) => openModal('account', acc)} onDeleteAccount={(brokerId, accId) => deleteAccount(brokerId, accId)} onCloseAccount={closeAccount} onReopenAccount={reopenAccount} onSelectAccount={(acc) => { setSelectedAccount(acc); setView('snapshots'); }} />}{view === 'snapshots' && <SnapshotsView selectedBroker={selectedBroker} selectedAccount={selectedAccount} privacyMode={privacyMode} darkMode={darkMode} getAccountCurrentValueRaw={getAccountCurrentValueRaw} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getLatestSnapshot={getLatestSnapshot} openModal={openModal} onDeleteSnapshot={(brokerId, accountId, snapId) => deleteSnapshot(brokerId, accountId, snapId)} onReopenAccount={reopenAccount} onBack={() => { setView('accounts'); setSelectedAccount(null); }} />}{view === 'movements' && <MovementsGlobalView brokers={brokers} privacyMode={privacyMode} />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} globalTWR={globalTWR} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} darkMode={darkMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
+      <main className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-10">{dataLoading ? <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 text-[#B6BCC6] animate-spin" /></div> : <>{view === 'dashboard' && <Dashboard brokers={brokers} privacyMode={privacyMode} darkMode={darkMode} totalPatrimony={totalPatrimony} patrimonyGoal={patrimonyGoal} totalInvestedGlobal={totalInvestedGlobal} totalNetGainLoss={totalNetGainLoss} globalTRI={globalTRI} twr={globalTWR} globalCategoryDistribution={globalCategoryDistribution} globalAccountTypeDistribution={globalAccountTypeDistribution} crossDistributionData={crossDistributionData} targetAllocation={targetAllocation} openModal={openModal} />}{view === 'brokers' && <BrokersView brokers={brokers} privacyMode={privacyMode} getTotalByBrokerInEur={getTotalByBrokerInEur} onAdd={() => openModal('broker')} onEdit={(b) => openModal('broker', b)} onDelete={(id) => deleteBroker(id)} onSelect={(b) => { setSelectedBroker(b); setView('accounts'); }} />}{view === 'accounts' && <AccountsView selectedBroker={selectedBroker} privacyMode={privacyMode} getSortedAccounts={getSortedAccounts} getTotalByBrokerInEur={getTotalByBrokerInEur} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getAccountCurrentValueRaw={getAccountCurrentValueRaw} onBack={() => { setView('brokers'); setSelectedBroker(null); }} onAddAccount={() => openModal('account')} onEditAccount={(acc) => openModal('account', acc)} onDeleteAccount={(brokerId, accId) => deleteAccount(brokerId, accId)} onCloseAccount={closeAccount} onReopenAccount={reopenAccount} onSelectAccount={(acc) => { setSelectedAccount(acc); setView('snapshots'); }} />}{view === 'snapshots' && <SnapshotsView selectedBroker={selectedBroker} selectedAccount={selectedAccount} privacyMode={privacyMode} darkMode={darkMode} getAccountCurrentValueRaw={getAccountCurrentValueRaw} getAccountInvestedTotalRaw={getAccountInvestedTotalRaw} getLatestSnapshot={getLatestSnapshot} openModal={openModal} onDeleteSnapshot={(brokerId, accountId, snapId) => deleteSnapshot(brokerId, accountId, snapId)} onReopenAccount={reopenAccount} onBack={() => { setView('accounts'); setSelectedAccount(null); }} />}{view === 'movements' && <MovementsGlobalView brokers={brokers} privacyMode={privacyMode} />}{view === 'simulation' && <SimulationView currentTotal={totalPatrimony} globalTRI={globalTRI} globalTWR={globalTWR} patrimonyGoal={patrimonyGoal} privacyMode={privacyMode} darkMode={darkMode} />}{view === 'history' && <HistoryView brokers={brokers} darkMode={darkMode} privacyMode={privacyMode} />}</>}</main>
       
       {/* MODALS */}
       <Modal isOpen={modals.broker} onClose={closeModal} title={editData ? "Modifier courtier" : "Nouveau courtier"}><BrokerForm onSubmit={handleSaveBroker} onCancel={closeModal} initialValue={editData ? editData.name : ''} /></Modal>
@@ -573,9 +610,16 @@ const InvestmentTrackerApp = () => {
       <Modal isOpen={modals.snapshot} onClose={closeModal} title={editData ? "Modifier valorisation" : "Nouvelle valorisation"}><SnapshotForm brokerId={selectedBroker?.id} accountId={selectedAccount?.id} onSubmit={handleSaveSnapshot} onCancel={closeModal} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} /></Modal>
       <Modal isOpen={modals.movement} onClose={() => {closeModal(); openModal('movementList')}} title={editData ? "Modifier mouvement" : "Nouveau mouvement"}><MovementForm onSubmit={handleSaveMovement} onCancel={() => {closeModal(); openModal('movementList')}} currencySymbol={selectedAccount?.currency ? CURRENCIES.find(c => c.code === selectedAccount.currency)?.symbol : '€'} initialData={editData} lastValuation={getAccountCurrentValueRaw(selectedAccount || {})} /></Modal>
       <Modal isOpen={modals.transfer} onClose={closeModal} title="Effectuer un transfert"><TransferForm brokers={brokers} onSubmit={handleSaveTransfer} onCancel={closeModal} /></Modal>
-      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-gray-50 dark:bg-slate-700/50 p-3 rounded-lg border border-gray-200 dark:border-slate-600"><span className="font-medium text-gray-600 dark:text-gray-300">Total Investi :</span><span className="font-bold text-lg text-gray-900 dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div>{!selectedAccount?.closed && <button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button>}<div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-gray-800 dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-gray-500 dark:text-gray-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-gray-300 hover:text-blue-500 dark:hover:text-blue-400"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-gray-300 hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-gray-400 py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
+      <Modal isOpen={modals.movementList} onClose={closeModal} title="Historique des versements"><div className="space-y-4"><div className="flex justify-between items-center bg-[#F3F1EA] dark:bg-slate-700/50 p-3 rounded-lg border border-[#E1DCD0] dark:border-slate-600"><span className="font-medium text-[#3C4A61] dark:text-slate-300">Total Investi :</span><span className="font-bold text-lg text-[#16233B] dark:text-white"><BlurMoney amount={getAccountInvestedTotalRaw(selectedAccount || {})} currency={selectedAccount?.currency} privacyMode={privacyMode} /></span></div>{!selectedAccount?.closed && <button onClick={() => { closeModal(); openModal('movement'); }} className="w-full py-3 bg-[#14603B] text-white rounded-lg font-bold hover:bg-[#0F4C2F] shadow-none flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" /> Ajouter un mouvement</button>}<div className="space-y-2 mt-4 max-h-64 overflow-y-auto">{selectedAccount?.movements && selectedAccount.movements.length > 0 ? selectedAccount.movements.map(m => (<div key={m.id} className="flex justify-between items-center p-3 bg-[#FDFCF9] dark:bg-slate-800 border border-[#E1DCD0] dark:border-slate-600 rounded-lg"><div className="flex items-center gap-3"><div className={`p-1.5 rounded-full ${m.type === 'deposit' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : m.type === 'interest' ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'}`}>{m.type === 'deposit' ? <ArrowUpCircle className="w-4 h-4" /> : m.type === 'interest' ? <Percent className="w-4 h-4" /> : <ArrowDownCircle className="w-4 h-4" />}</div><div><div className="font-bold text-[#16233B] dark:text-white">{new Date(m.date).toLocaleDateString()}</div><div className="text-xs text-[#6E7685] dark:text-slate-400">{m.type === 'deposit' ? 'Dépôt' : m.type === 'interest' ? 'Dividende' : 'Retrait'}</div></div></div><div className="flex items-center gap-3"><span className={`font-bold ${m.type === 'deposit' ? 'text-green-700 dark:text-green-400' : m.type === 'interest' ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400'}`}>{m.type === 'withdrawal' ? '-' : '+'}<BlurMoney amount={parseFloat(m.amount)} privacyMode={privacyMode} /></span><div className="flex gap-1"><button onClick={() => { closeModal(); openModal('movement', m); }} className="text-[#B6BCC6] hover:text-[#14603B] dark:hover:text-[#14603B]"><Edit2 className="w-4 h-4" /></button><button onClick={() => deleteMovement(m.id)} className="text-[#B6BCC6] hover:text-red-500 dark:hover:text-red-400"><Trash2 className="w-4 h-4" /></button></div></div></div>)) : <div className="text-center text-[#8B93A1] py-4">Aucun mouvement enregistré</div>}</div></div></Modal>
       <Modal isOpen={modals.allocation} onClose={closeModal} title="Définir l'allocation cible"><TargetAllocationForm currentTargets={targetAllocation} onSubmit={(t) => { const newAlloc = t; saveUserData(undefined, undefined, newAlloc); closeModal(); showToast('Cibles mises à jour'); }} onCancel={closeModal} /></Modal>
-      <Modal isOpen={modals.goal} onClose={closeModal} title="Objectif Patrimonial"><div className="space-y-4"><label className={labelClass}>Montant cible (€)</label><input type="number" defaultValue={patrimonyGoal} id="goalInput" className={`${inputClass} text-lg font-bold`} /><div className="flex justify-end gap-2 pt-4"><button onClick={closeModal} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const val = parseFloat(document.getElementById('goalInput').value); if(val > 0) { saveUserData(undefined, val, undefined); closeModal(); showToast('Objectif mis à jour'); } }} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 shadow-lg">Valider</button></div></div></Modal>
+      <Modal isOpen={modals.goal} onClose={closeModal} title="Objectif Patrimonial"><div className="space-y-4"><label className={labelClass}>Montant cible (€)</label><input type="number" defaultValue={patrimonyGoal} id="goalInput" className={`${inputClass} text-lg font-bold`} /><div className="flex justify-end gap-2 pt-4"><button onClick={closeModal} className="px-4 py-2 text-[#2A3B55] dark:text-slate-300 hover:bg-[#EDEAE0] dark:hover:bg-slate-700 rounded-lg">Annuler</button><button onClick={() => { const val = parseFloat(document.getElementById('goalInput').value); if(val > 0) { saveUserData(undefined, val, undefined); closeModal(); showToast('Objectif mis à jour'); } }} className="bg-[#14603B] text-white px-6 py-2 rounded-lg hover:bg-[#0F4C2F] shadow-none">Valider</button></div></div></Modal>
+      {/* Pied de page éditorial */}
+      <footer className="mt-16 border-t border-[#E4E0D6] dark:border-slate-700">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-7 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <p className="text-xs text-[#6E7685] dark:text-slate-400 max-w-2xl">Les contenus de cette application sont pédagogiques et ne constituent pas un conseil en investissement. Vos données restent privées et synchronisées sur votre compte.</p>
+          <p className="kicker whitespace-nowrap">{new Date().getFullYear()} · Journal de bord</p>
+        </div>
+      </footer>
       <Toast message={notification.message} type={notification.type} onClose={() => setNotification({ ...notification, message: '' })} />
     </div>
   );

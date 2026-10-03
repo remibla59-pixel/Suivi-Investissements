@@ -1,15 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   SYSTÈME DE DESIGN — « JOURNAL DE BORD »
+   Papier ivoire, encre marine, serif éditorial, étiquettes mono,
+   filets fins plutôt qu'ombres. Le mode sombre garde ses teintes
+   ardoise pour rester lisible le soir.
+   ============================================================ */
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  --paper: #F6F4EE;
+  --paper-card: #FDFCF9;
+  --paper-soft: #F3F1EA;
+  --ink: #16233B;
+  --ink-body: #3C4A61;
+  --ink-soft: #6E7685;
+  --ink-faint: #8B93A1;
+  --line: #E4E0D6;
+  --line-strong: #D8D2C4;
+  --green: #14603B;
+  --green-dark: #0F4C2F;
+  --green-soft: #DCE7DE;
+  --navy: #1B2A41;
+  --gold: #C9A227;
+  --brick: #8C2F39;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  font-family: 'Spectral', Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  line-height: 1.6;
+  font-weight: 400;
+  color: var(--ink-body);
+  background-color: var(--paper);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -17,56 +39,80 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
+html,
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  background-color: var(--paper);
+  color: var(--ink-body);
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+html.dark,
+html.dark body {
+  background-color: #0f172a;
+  color: #E2E8F0;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+/* Titres : serif éditorial, encre marine */
+h1, h2, h3, h4, h5 {
+  font-family: 'Spectral', Georgia, 'Iowan Old Style', serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.dark h1, .dark h2, .dark h3, .dark h4, .dark h5 { color: #F1F5F9; }
+
+/* Étiquettes en petites capitales de machine à écrire (LES THÈMES, LE JOURNAL…) */
+.kicker {
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.68rem;
   font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
+  color: var(--ink-soft);
 }
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+.dark .kicker { color: #94A3B8; }
+
+/* Chiffres alignés pour les montants */
+.mono {
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Fond papier quadrillé (le motif du blog d'origine) */
+.paper-grid {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(rgba(27, 42, 65, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(27, 42, 65, 0.045) 1px, transparent 1px);
+  background-size: 30px 30px;
 }
+.dark .paper-grid { background-color: #0f172a; background-image: none; }
+
+/* Double filet éditorial (sépare les grandes sections) */
+.rule-double { border-top: 1px solid var(--line-strong); box-shadow: 0 3px 0 -2px var(--line); }
+.dark .rule-double { border-color: #334155; box-shadow: 0 3px 0 -2px #1e293b; }
+
+/* Lien éditorial souligné au survol */
+.link-rule {
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+.link-rule:hover { border-color: var(--gold); }
+
+::selection { background: rgba(201, 162, 39, 0.28); }
+
+/* Barres de défilement discrètes */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 0; }
+.dark *::-webkit-scrollbar-thumb { background: #334155; }
+
+/* Animations conservées par l'application */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes scale-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+.animate-fade-in { animation: fade-in 0.25s ease-out; }
+.animate-slide-up { animation: slide-up 0.25s ease-out; }
+.animate-scale-in { animation: scale-in 0.2s ease-out; }
