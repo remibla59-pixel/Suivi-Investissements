@@ -6,7 +6,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import { calculateXIRR, getNetInvestedUntilDate, processMonthlyStats, calculateTWR, annualizeReturn, calculateTWRFromSnapshots } from "./utils/calculs.js";
-import { INVESTMENT_CATEGORIES, ACCOUNT_TYPES, CURRENCIES } from "./utils/constantes.js";
+import { INVESTMENT_CATEGORIES, ACCOUNT_TYPES, CURRENCIES, getSubcategoryLabel } from "./utils/constantes.js";
 import { BlurMoney, Toast, Modal, inputClass, labelClass } from "./components/ui.jsx";
 import { SimulationView } from "./components/views/SimulationView.jsx";
 import { MovementsGlobalView } from "./components/views/MovementsGlobalView.jsx";
@@ -213,7 +213,9 @@ const InvestmentTrackerApp = () => {
                 };
                 account.snapshots.push(snap);
             }
-            snap.categories.push({ type: category, amount: amount });
+            // La catégorie exportée peut contenir une sous-catégorie : "actions:etf".
+            const [catType, catSub] = category.split(':');
+            snap.categories.push(catSub ? { type: catType, sub: catSub, amount: amount } : { type: catType, amount: amount });
             // Mise à jour du total
             snap.amount = (parseFloat(snap.amount) + amount).toFixed(2);
         }
@@ -234,7 +236,7 @@ const InvestmentTrackerApp = () => {
             if(account.snapshots) {
                 account.snapshots.forEach(snap => {
                     snap.categories.forEach(cat => {
-                        csvContent += `${snap.date};${broker.name};${account.name};${accType};Valorisation;${cat.type};${cat.amount};${currency}\n`;
+                        csvContent += `${snap.date};${broker.name};${account.name};${accType};Valorisation;${cat.sub ? `${cat.type}:${cat.sub}` : cat.type};${cat.amount};${currency}\n`;
                     });
                 });
             }
@@ -355,8 +357,8 @@ const InvestmentTrackerApp = () => {
         const rate = parseFloat(acc.exchangeRate || 1);
         if (last?.categories) last.categories.forEach(c => {
           const v = parseFloat(c.amount || 0) * rate;
-          if (!dist[c.type]) dist[c.type] = { value: 0, accounts: [] };
-          dist[c.type].value += v;
+          if (!dist[c.type]) dist[c.type] = { value: 0, accounts: [], subs: {} };
+          dist[c.type].value += v; if (c.sub) dist[c.type].subs[c.sub] = (dist[c.type].subs[c.sub] || 0) + v;
           dist[c.type].accounts.push({
             brokerName: b.name,
             accountName: acc.name,
@@ -377,7 +379,10 @@ const InvestmentTrackerApp = () => {
         color: i?.color || '#999',
         percentage: absTotal ? (Math.abs(data.value) / absTotal * 100).toFixed(1) : 0,
         type: k,
-        accounts: data.accounts.sort((a, b) => b.value - a.value)
+        subs: Object.entries(data.subs || {}).map(([sub, sv]) => ({ sub, label: getSubcategoryLabel(k, sub), value: sv })).sort((a, b) => b.value - a.value),
+        // Une même classe peut contenir plusieurs lignes (sous-catégories) pour un même
+        // compte : on cumule par compte pour ne pas le dupliquer dans le graphique croisé.
+        accounts: Object.values(data.accounts.reduce((map, a) => { map[a.accountId] = map[a.accountId] ? { ...map[a.accountId], value: map[a.accountId].value + a.value } : a; return map; }, {})).sort((a, b) => b.value - a.value)
       };
     }).sort((a, b) => b.value - a.value);
   }, [brokers]);

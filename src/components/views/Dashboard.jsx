@@ -391,6 +391,16 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                                                     )}
                                                 </div>
                                             )}
+                                            {d.subs && d.subs.length > 0 && (
+                                                <div className="mt-1.5 pl-4 space-y-0.5 border-l-2 border-gray-100 dark:border-slate-700">
+                                                    {d.subs.map(s => (
+                                                        <div key={s.sub} className="flex justify-between text-[11px] text-gray-500 dark:text-gray-400 gap-2">
+                                                            <span className="truncate">{s.label}</span>
+                                                            <span className="whitespace-nowrap"><BlurMoney amount={s.value} privacyMode={privacyMode} />{d.value !== 0 && <span className="ml-1 text-gray-400">({Math.abs((s.value / d.value) * 100).toFixed(0)} %)</span>}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 }) : <div className="h-full flex items-center justify-center text-gray-400">Aucun actif</div>}

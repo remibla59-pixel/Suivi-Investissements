@@ -14,6 +14,42 @@ export const INVESTMENT_CATEGORIES = [
   { value: 'autre', label: 'Autre', color: '#9CA3AF', icon: PieChartIcon }
 ];
 
+// Sous-catégories optionnelles proposées sous chaque classe d'actifs (ex. Actions
+// → ETF, Small Caps). Elles affinent la saisie et la lecture, mais tous les agrégats
+// et graphiques restent calculés au niveau de la classe d'actifs : une valorisation
+// saisie sans sous-catégorie reste parfaitement valide (données existantes incluses).
+export const INVESTMENT_SUBCATEGORIES = {
+  actions: [
+    { value: 'etf', label: 'ETF' },
+    { value: 'smallCaps', label: 'Small Caps' },
+    { value: 'actionsDirectes', label: 'Actions en direct' },
+    { value: 'fondsThematiques', label: 'Fonds thématiques' }
+  ],
+  obligations: [
+    { value: 'etf', label: 'ETF obligataires' },
+    { value: 'fonds', label: 'Fonds obligataires' },
+    { value: 'fondsDated', label: 'Fonds datés' },
+    { value: 'obligationsDirectes', label: 'Obligations en direct' }
+  ],
+  crypto: [
+    { value: 'btc', label: 'Bitcoin' },
+    { value: 'eth', label: 'Ethereum' },
+    { value: 'altcoins', label: 'Altcoins' }
+  ],
+  or: [
+    { value: 'physique', label: 'Or physique' },
+    { value: 'etf', label: 'ETF / Trackers' }
+  ],
+  immobilier: [
+    { value: 'scpi', label: 'SCPI' },
+    { value: 'immobilierDirect', label: 'Immobilier direct' }
+  ]
+};
+
+// Libellé lisible d'une sous-catégorie (retombe sur la valeur brute si inconnue).
+export const getSubcategoryLabel = (type, sub) =>
+  INVESTMENT_SUBCATEGORIES[type]?.find(s => s.value === sub)?.label || sub;
+
 export const ACCOUNT_TYPES = [
   { value: 'PEA', label: 'PEA', color: '#3B82F6' },
   { value: 'CTO', label: 'Compte Titres', color: '#10B981' },
