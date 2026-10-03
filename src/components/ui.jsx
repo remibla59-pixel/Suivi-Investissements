@@ -4,31 +4,6 @@
 import { useEffect } from "react";
 import { AlertCircle, CheckCircle, X, TrendingUp, TrendingDown, Activity } from "lucide-react";
 
-// Rose des vents (l'ornement du blog d'origine), en SVG décoratif.
-export const CompassRose = ({ className = "", opacity = 0.14 }) => (
-    <svg viewBox="0 0 200 200" className={className} style={{ opacity }} aria-hidden="true" focusable="false">
-        <circle cx="100" cy="100" r="96" fill="none" stroke="#1B2A41" strokeWidth="1" />
-        <circle cx="100" cy="100" r="78" fill="none" stroke="#1B2A41" strokeWidth="0.7" />
-        <circle cx="100" cy="100" r="52" fill="none" stroke="#1B2A41" strokeWidth="0.5" />
-        {Array.from({ length: 72 }).map((_, i) => {
-            const a = (i * 5 * Math.PI) / 180;
-            const long = i % 6 === 0;
-            const r1 = long ? 62 : 71;
-            return (
-                <line
-                    key={i}
-                    x1={100 + r1 * Math.sin(a)} y1={100 - r1 * Math.cos(a)}
-                    x2={100 + 78 * Math.sin(a)} y2={100 - 78 * Math.cos(a)}
-                    stroke="#1B2A41" strokeWidth={long ? 1.1 : 0.55}
-                />
-            );
-        })}
-        <polygon points="100,16 108,100 100,184 92,100" fill="#D8DEE9" stroke="#1B2A41" strokeWidth="0.75" />
-        <polygon points="16,100 100,92 184,100 100,108" fill="#E4C97F" stroke="#1B2A41" strokeWidth="0.75" />
-        <circle cx="100" cy="100" r="7" fill="#F6F4EE" stroke="#1B2A41" strokeWidth="1" />
-    </svg>
-);
-
 // Nuance d'une couleur (pour décliner les sous-catégories d'une même classe d'actifs).
 export const shadeColor = (hex, percent) => {
     const n = parseInt(String(hex).replace('#', ''), 16);

@@ -5,7 +5,7 @@ import { Target, TrendingUp, TrendingDown, PieChart as PieChartIcon, BarChart3, 
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ReferenceLine, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { getNetInvestedUntilDate, processMonthlyStats, calculateSharpeRatio, formatCompactAxis, isAccountClosedAt, processAllocationHistory } from "../../utils/calculs.js";
 import { INVESTMENT_CATEGORIES, INVESTMENT_SUBCATEGORIES } from "../../utils/constantes.js";
-import { BlurMoney, PerformanceBadge, ChartTooltip, ChartLegend, axisTickProps, gridStroke, CompassRose, subcategoryShades } from "../ui.jsx";
+import { BlurMoney, PerformanceBadge, ChartTooltip, ChartLegend, axisTickProps, gridStroke, subcategoryShades } from "../ui.jsx";
 
 // Sélecteur de niveau : voir la répartition par classe d'actifs ou par sous-catégorie.
 // C'est un choix d'affichage uniquement — les montants enregistrés ne changent pas.
@@ -315,17 +315,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
 
     return (
         <div className="space-y-8 animate-fade-in w-full">
-            {/* En-tête éditorial : rose des vents en filigrane, titre serif, chapô */}
-            <div className="relative overflow-hidden pb-1">
-                <CompassRose className="hidden md:block absolute -top-8 right-0 w-72 h-72 -mr-8 pointer-events-none" opacity={darkMode ? 0.09 : 0.15} />
-                <div className="relative max-w-3xl">
-                    <p className="kicker">Journal de bord · Tableau de bord</p>
-                    <h1 className="mt-3 text-4xl sm:text-[2.6rem] leading-[1.08]">Votre patrimoine, mois après mois</h1>
-                    <p className="mt-4 text-[#3C4A61] dark:text-slate-300">Valorisations, allocation, performance et comparaison aux indices — les chiffres d'abord, sans promesses.</p>
-                </div>
-            </div>
-
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none relative overflow-hidden">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none relative overflow-hidden">
                 <div className="flex justify-between items-center mb-4 relative z-10">
                     <div>
                         <h2 className="text-lg font-bold text-[#16233B] dark:text-white">Objectif Patrimonial</h2>
@@ -348,28 +338,28 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
                     <div className="text-[#6E7685] dark:text-slate-400 font-medium mb-1">Patrimoine Total</div>
                     <div className="text-3xl font-bold text-[#16233B] dark:text-white"><BlurMoney amount={totalPatrimony} privacyMode={privacyMode} /></div>
                 </div>
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
                     <div className="text-[#6E7685] dark:text-slate-400 font-medium mb-1">Capital Investi</div>
                     <div className="text-3xl font-bold text-[#2A3B55] dark:text-slate-200"><BlurMoney amount={totalInvestedGlobal} privacyMode={privacyMode} /></div>
                 </div>
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
                     <div className="text-[#6E7685] dark:text-slate-400 font-medium mb-1">Plus/Moins Value</div>
                     <div className={`text-3xl font-bold ${totalNetGainLoss >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
                         {totalNetGainLoss >= 0 ? '+' : ''}<BlurMoney amount={totalNetGainLoss} privacyMode={privacyMode} />
                     </div>
                 </div>
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col justify-between">
                     <div className="text-[#6E7685] dark:text-slate-400 font-medium mb-1">Performance Globale</div>
                     <div className="text-3xl font-bold"><PerformanceBadge current={totalPatrimony} invested={totalInvestedGlobal} tri={globalTRI} twr={twr} /></div>
                 </div>
             </div>
 
             {rebalanceAlerts.length > 0 && (
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-amber-200 dark:border-amber-800/60 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-amber-200 dark:border-amber-800/60 shadow-none">
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-[#16233B] dark:text-white flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-500" /> Alertes de rééquilibrage</h3>
                     <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">{rebalanceAlerts.length} alerte{rebalanceAlerts.length > 1 ? 's' : ''}</span>
@@ -398,7 +388,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
             </div>
             )}
             {riskStats && (
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <h3 className="font-bold mb-5 text-[#16233B] dark:text-white flex items-center gap-2"><Activity className="w-5 h-5 text-rose-500" /> Indicateurs de risque</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-[#F3F1EA] dark:bg-slate-700/50 rounded-xl p-4 border border-[#E4E0D6] dark:border-slate-700">
@@ -420,7 +410,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
             </div>
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
                         <h3 className="font-bold flex items-center gap-2 text-lg text-[#16233B] dark:text-white"><TrendingUp className="w-5 h-5 text-green-500" /> Évolution : Épargne vs Intérêts</h3>
                         <ChartLegend items={[{ name: 'Valeur Totale', color: '#14603B' }, { name: 'Capital Investi', color: '#6E7685' }]} />
@@ -445,7 +435,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                     </div>
                 </div>
 
-                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col">
+                <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none flex flex-col">
                     <div className="flex justify-between items-center mb-6">
                         <h3 className="font-bold flex items-center gap-2 text-lg text-[#16233B] dark:text-white"><PieChartIcon className="w-5 h-5 text-[#14603B]" /> Répartition Actifs & Enveloppes</h3>
                         <div className="flex items-center gap-2">
@@ -532,7 +522,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                 </div>
             </div>
 
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
                     <h3 className="font-bold text-[#16233B] dark:text-white flex items-center gap-2"><PieChartIcon className="w-5 h-5 text-[#14603B]" /> Répartition des actifs</h3>
                     <LevelSelector level={level} onChange={setLevel} />
@@ -566,7 +556,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                 ) : <p className="text-[#8B93A1] text-sm">Aucune donnée d'actif</p>}
             </div>
 
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <h3 className="font-bold text-[#16233B] dark:text-white flex items-center gap-2"><PieChartIcon className="w-5 h-5 text-emerald-500" /> Allocation dans le temps</h3>
                     {allocationChart && <ChartLegend items={allocationChart.cats.map(c => ({ name: c.label, color: c.color }))} />}
@@ -589,7 +579,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                 </div>
             </div>
 
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <h3 className="font-bold text-[#16233B] dark:text-white flex items-center gap-2"><TrendingUp className="w-5 h-5 text-[#14603B]" /> Comparaison Benchmark</h3>
                     <div className="flex items-center gap-2">
@@ -665,7 +655,7 @@ export const Dashboard = ({ brokers, privacyMode, darkMode, totalPatrimony, patr
                 )}
             </div>
 
-            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-md border border-[#E4E0D6] dark:border-slate-700 shadow-none">
+            <div className="bg-[#FDFCF9] dark:bg-slate-800 p-6 rounded-2xl border border-[#E4E0D6] dark:border-slate-700 shadow-none">
                 <h3 className="font-bold mb-6 flex items-center gap-2 text-lg text-[#16233B] dark:text-white"><BarChart3 className="w-5 h-5 text-[#1B2A41]" /> Répartition des actifs par enveloppe</h3>
                 <div className="h-80">
                     {crossDistributionData.length > 0 ? (
