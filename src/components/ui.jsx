@@ -23,7 +23,7 @@ export const BlurMoney = ({ amount, currency = '€', privacyMode, className = "
     if (privacyMode) {
         return <span className={`bg-gray-200 dark:bg-slate-700 text-transparent rounded px-1 select-none ${className}`}>00000</span>;
     }
-    return <span className={`mono ${className}`}>{amount.toLocaleString('fr-FR')} {currency}</span>;
+    return <span className={`num ${className}`}>{amount.toLocaleString('fr-FR')} {currency}</span>;
 };
 
 export const Toast = ({ message, type, onClose }) => {
@@ -116,7 +116,7 @@ export const ChartTooltip = ({ active, payload, label, darkMode = false, formatt
                             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color || entry.stroke || entry.fill }} />
                             {entry.name}
                         </span>
-                        <span className="font-semibold mono tabular-nums">{fmt(entry.value, entry)}</span>
+                        <span className="font-semibold num">{fmt(entry.value, entry)}</span>
                     </div>
                 ))}
             </div>

@@ -60,7 +60,9 @@ const InvestmentTrackerApp = () => {
   const [authLoading, setAuthLoading] = useState(() => !auth);
   const [dataLoading, setDataLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  // Identité « carnet » : l'appli s'ouvre sur le papier clair par défaut, comme la maquette
+  // de budget. Le mode sombre reste disponible via le bouton lune/soleil de l'en-tête.
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme-v2') === 'dark');
   const [privacyMode, setPrivacyMode] = useState(false);
 
   const [brokers, setBrokers] = useState([]);
@@ -79,10 +81,10 @@ const InvestmentTrackerApp = () => {
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+      localStorage.setItem('theme-v2', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      localStorage.setItem('theme-v2', 'light');
     }
   }, [darkMode]);
 
